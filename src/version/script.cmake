@@ -27,6 +27,8 @@ endif()
 
 file(READ ${SCRIPT_TEMPLATE} template_file)
 
+set(SD2PSX_VERSION "max-las")
+
 string(REPLACE "@SD2PSX_VERSION@" ${SD2PSX_VERSION} template_file "${template_file}")
 string(REPLACE "@SD2PSX_COMMIT@" ${SD2PSX_COMMIT} template_file "${template_file}")
 string(REPLACE "@SD2PSX_BRANCH@" ${SD2PSX_BRANCH} template_file "${template_file}")
