@@ -19,6 +19,9 @@ int ps1_dirty_activity;
 
 static int num_dirty;
 
+static uint8_t ps1_block[8192];
+static int sectors_in_ps1_block = 0;
+
 #define SWAP(a, b) do { \
     uint16_t tmp = a; \
     a = b; \
@@ -84,6 +87,7 @@ void ps1_dirty_task(void) {
 
     int num_after = 0;
     int hit = 0;
+    int ps1_blocks_written = 0;
     uint64_t start = time_us_64();
     while (1) {
         if (!ps1_dirty_lockout_expired())
@@ -110,25 +114,36 @@ void ps1_dirty_task(void) {
 
         ++hit;
 
-        QPRINTF("ps1 - write sector %d\n", sector);
-
-        if (ps1_cardman_write_sector(sector, flushbuf) != 0) {
-            // TODO: do something if we get too many errors?
-            // for now lets push it back into the heap and try again later
-            QPRINTF("!! writing sector 0x%x failed\n", sector);
-
-            ps1_dirty_lock();
-            ps1_dirty_mark(sector);
-            ps1_dirty_unlock();
+        if (sectors_in_ps1_block && (num_after == 0 || sectors_in_ps1_block == 64)) {
+            ps1_cardman_write_block(sector, ps1_block, sectors_in_ps1_block);
+            sectors_in_ps1_block = 0;
+            ++ps1_blocks_written;
+        } else {
+            memcpy(ps1_block + sectors_in_ps1_block, flushbuf, PS1_PAGE_SIZE);
+            ++sectors_in_ps1_block;
         }
+
+        // QPRINTF("ps1 - write sector %d\n", sector);
+
+        // if (ps1_cardman_write_sector(sector, flushbuf) != 0) {
+        //     // TODO: do something if we get too many errors?
+        //     // for now lets push it back into the heap and try again later
+        //     QPRINTF("!! writing sector 0x%x failed\n", sector);
+
+        //     ps1_dirty_lock();
+        //     ps1_dirty_mark(sector);
+        //     ps1_dirty_unlock();
+        // }
     }
-    /* to make sure writes hit the storage medium */
-    ps1_cardman_flush();
 
-    uint64_t end = time_us_64();
+    // hit = the loop ran at least once
+    if (hit) {
+        if (ps1_blocks_written) ps1_cardman_flush();
 
-    if (hit)
-        QPRINTF("remain to flush - %d - this one flushed %d and took %d ms\n", num_after, hit, (int)((end - start) / 1000));
+        uint64_t end = time_us_64();
+
+        QPRINTF("remain to flush - %d - this one flushed %d and took %d ms\n", num_after, hit, (uint32_t)((end - start) / 1000));
+    }
 
     if (num_after || !ps1_dirty_lockout_expired())
         ps1_dirty_activity = 1;

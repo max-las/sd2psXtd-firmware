@@ -29,8 +29,8 @@
 
 
 #define CARD_SIZE (128 * 1024)
-#define BLOCK_SIZE 128
-static uint8_t flushbuf[BLOCK_SIZE];
+#define PS1_SECTOR_SIZE 128
+static uint8_t flushbuf[PS1_SECTOR_SIZE];
 static int fd = -1;
 
 #define IDX_MIN 1
@@ -130,10 +130,10 @@ int ps1_cardman_read_sector(int sector, void *buf128) {
     if (fd < 0)
         return -1;
 
-    if (sd_seek(fd, sector * BLOCK_SIZE, SEEK_SET) != 0)
+    if (sd_seek(fd, sector * PS1_SECTOR_SIZE, SEEK_SET) != 0)
         return -2;
 
-    if (sd_read(fd, buf128, BLOCK_SIZE) != BLOCK_SIZE)
+    if (sd_read(fd, buf128, PS1_SECTOR_SIZE) != PS1_SECTOR_SIZE)
         return -3;
 
     return 0;
@@ -143,10 +143,25 @@ int ps1_cardman_write_sector(int sector, void *buf512) {
     if (fd < 0)
         return -1;
 
-    if (sd_seek(fd, sector * BLOCK_SIZE, SEEK_SET) != 0)
+    // sector = the nth sector to write (starting at 0)
+    if (sd_seek(fd, sector * PS1_SECTOR_SIZE, SEEK_SET) != 0)
         return -1;
 
-    if (sd_write(fd, buf512, BLOCK_SIZE) != BLOCK_SIZE)
+    // write PS1_SECTOR_SIZE bytes starting from the buf512 pointer
+    if (sd_write(fd, buf512, PS1_SECTOR_SIZE) != PS1_SECTOR_SIZE)
+        return -1;
+
+    return 0;
+}
+
+int ps1_cardman_write_block(int sector, void *ps1_block, int sectors_in_ps1_block) {
+    if (fd < 0)
+        return -1;
+
+    if (sd_seek(fd, sector * PS1_SECTOR_SIZE, SEEK_SET) != 0)
+        return -1;
+
+    if (sd_write(fd, ps1_block, sectors_in_ps1_block * PS1_SECTOR_SIZE) != sectors_in_ps1_block * PS1_SECTOR_SIZE)
         return -1;
 
     return 0;
@@ -171,10 +186,10 @@ static void ensuredirs(void) {
 }
 
 static void genblock(size_t pos, void *buf) {
-    memset(buf, 0xFF, BLOCK_SIZE);
+    memset(buf, 0xFF, PS1_SECTOR_SIZE);
 
     if (pos < 0x2000)
-        memcpy(buf, &ps1_empty_card[pos], BLOCK_SIZE);
+        memcpy(buf, &ps1_empty_card[pos], PS1_SECTOR_SIZE);
 }
 
 void ps1_cardman_open(void) {
@@ -224,12 +239,12 @@ void ps1_cardman_open(void) {
         log(LOG_INFO, "create new image at %s... ", path);
         uint64_t cardprog_start = time_us_64();
 
-        for (size_t pos = 0; pos < CARD_SIZE; pos += BLOCK_SIZE) {
+        for (size_t pos = 0; pos < CARD_SIZE; pos += PS1_SECTOR_SIZE) {
             genblock(pos, flushbuf);
 #if WITH_PSRAM
-            psram_write_dma(pos, flushbuf, BLOCK_SIZE, NULL);
+            psram_write_dma(pos, flushbuf, PS1_SECTOR_SIZE, NULL);
 #endif
-            if (sd_write(fd, flushbuf, BLOCK_SIZE) != BLOCK_SIZE)
+            if (sd_write(fd, flushbuf, PS1_SECTOR_SIZE) != PS1_SECTOR_SIZE)
                 fatal(ERR_CARDMAN, "cannot init memcard");
 #if WITH_PSRAM
             psram_wait_for_dma();
@@ -255,11 +270,11 @@ void ps1_cardman_open(void) {
         log(LOG_INFO, "reading card.... ");
         uint64_t cardprog_start = time_us_64();
 #if WITH_PSRAM
-        for (size_t pos = 0; pos < CARD_SIZE; pos += BLOCK_SIZE) {
-            if (sd_read(fd, flushbuf, BLOCK_SIZE) != BLOCK_SIZE)
+        for (size_t pos = 0; pos < CARD_SIZE; pos += PS1_SECTOR_SIZE) {
+            if (sd_read(fd, flushbuf, PS1_SECTOR_SIZE) != PS1_SECTOR_SIZE)
                 fatal(ERR_CARDMAN, "cannot read memcard");
 
-            psram_write_dma(pos, flushbuf, BLOCK_SIZE, NULL);
+            psram_write_dma(pos, flushbuf, PS1_SECTOR_SIZE, NULL);
             psram_wait_for_dma();
         }
 #endif
