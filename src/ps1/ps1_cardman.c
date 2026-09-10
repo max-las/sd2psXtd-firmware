@@ -138,29 +138,14 @@ int ps1_cardman_read_sector(int sector, void *buf128) {
     return 0;
 }
 
-int ps1_cardman_write_sector(int sector, void *buf512) {
+int ps1_cardman_write_block(void *buffer, int sectors_count, int first_sector) {
     if (fd < 0)
         return -1;
 
-    // sector = the nth sector to write (starting at 0)
-    if (sd_seek(fd, sector * PS1_PAGE_SIZE, SEEK_SET) != 0)
+    if (sd_seek(fd, first_sector * PS1_PAGE_SIZE, SEEK_SET) != 0)
         return -1;
 
-    // write PS1_PAGE_SIZE bytes starting from the buf512 pointer
-    if (sd_write(fd, buf512, PS1_PAGE_SIZE) != PS1_PAGE_SIZE)
-        return -1;
-
-    return 0;
-}
-
-int ps1_cardman_write_block(void *flushblock, int sectors_in_flushblock, int first_sector_in_flushblock) {
-    if (fd < 0)
-        return -1;
-
-    if (sd_seek(fd, first_sector_in_flushblock * PS1_PAGE_SIZE, SEEK_SET) != 0)
-        return -1;
-
-    if (sd_write(fd, flushblock, sectors_in_flushblock * PS1_PAGE_SIZE) != sectors_in_flushblock * PS1_PAGE_SIZE)
+    if (sd_write(fd, buffer, sectors_count * PS1_PAGE_SIZE) != sectors_count * PS1_PAGE_SIZE)
         return -1;
 
     return 0;
@@ -239,7 +224,7 @@ void ps1_cardman_open(void) {
         uint64_t cardprog_start = time_us_64();
 
         for (size_t pos = 0; pos < CARD_SIZE; pos += PS1_PAGE_SIZE) {
-            genblock(pos, flushbuf);
+            genblock(pos, flushbuf); // MTODO: optimize that too
 #if WITH_PSRAM
             psram_write_dma(pos, flushbuf, PS1_PAGE_SIZE, NULL);
 #endif
