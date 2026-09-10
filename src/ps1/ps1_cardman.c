@@ -153,18 +153,18 @@ int ps1_cardman_write_sector(int sector, void *buf512) {
     return 0;
 }
 
-int ps1_cardman_write_block(void *ps1_block, int sectors_in_ps1_block, int first_sector_in_ps1_block) {
+int ps1_cardman_write_block(void *flushblock, int sectors_in_flushblock, int first_sector_in_flushblock) {
     if (fd < 0)
         return -1;
 
-    int writes = sectors_in_ps1_block == 1 ? 2 : 1;
-    for (int i = 0; i < writes; i++) {
-        if (sd_seek(fd, first_sector_in_ps1_block * PS1_PAGE_SIZE, SEEK_SET) != 0)
-            return -1;
+    if (sd_seek(fd, first_sector_in_flushblock * PS1_PAGE_SIZE, SEEK_SET) != 0)
+        return -1;
 
-        if (sd_write(fd, ps1_block, sectors_in_ps1_block * PS1_PAGE_SIZE) != sectors_in_ps1_block * PS1_PAGE_SIZE)
-            return -1;
-    }
+    if (sd_write(fd, flushblock, sectors_in_flushblock * PS1_PAGE_SIZE) != sectors_in_flushblock * PS1_PAGE_SIZE)
+        return -1;
+
+    if (sectors_in_flushblock == 1)
+        sd_seek(fd, 0, SEEK_SET);
 
     return 0;
 }

@@ -14,16 +14,18 @@
 #include <string.h>
 #include <stdbool.h>
 
+#define PS1_BLOCK_SIZE = 8192;
+
 spin_lock_t *ps1_dirty_spin_lock;
 volatile uint32_t ps1_dirty_lockout;
 int ps1_dirty_activity;
 
 static int num_dirty;
 
-static uint8_t ps1_block[8192];
-static int sectors_in_ps1_block = 0;
-static int first_sector_in_ps1_block = -1;
-static int last_sector_in_ps1_block = -1;
+static uint8_t flushblock[PS1_BLOCK_SIZE];
+static int sectors_in_flushblock = 0;
+static int first_sector_in_flushblock = -1;
+static int last_sector_in_flushblock = -1;
 
 #define SWAP(a, b) do { \
     uint16_t tmp = a; \
@@ -86,13 +88,12 @@ int ps1_dirty_get_marked(void) {
 }
 
 void ps1_dirty_task(void) {
-    static uint8_t flushbuf[128];
+    // static uint8_t flushbuf[128];
 
     int num_after = 0;
     int hit = 0;
-    int ps1_blocks_written = 0;
-    bool write_block = false;
-    bool sector_to_next_block = false;
+    int flushblocks_written = 0;
+    bool defer_sector = false;
     uint64_t start = time_us_64();
     while (1) {
         if (!ps1_dirty_lockout_expired())
@@ -103,50 +104,49 @@ void ps1_dirty_task(void) {
 
         ps1_dirty_lock();
         int sector = ps1_dirty_get_marked();
-        num_after = num_dirty;
         if (sector == -1) {
             ps1_dirty_unlock();
             break;
         }
+        num_after = num_dirty;
+        uint8_t *sector_content = flushblock + (sectors_in_flushblock * PS1_PAGE_SIZE);
 #if WITH_PSRAM
-        psram_read_dma(sector * 128, flushbuf, 128, NULL);
+        psram_read_dma(sector * PS1_PAGE_SIZE, sector_content, PS1_PAGE_SIZE, NULL);
         psram_wait_for_dma();
 #else
         uint8_t* page = ps1_mc_data_interface_get_page(sector);
-        memcpy(flushbuf, page, PS1_PAGE_SIZE);
+        memcpy(sector_content, page, PS1_PAGE_SIZE);
 #endif
         ps1_dirty_unlock();
 
         ++hit;
 
-        if (sectors_in_ps1_block == 0 || sector == last_sector_in_ps1_block + 1) {
-            memcpy(ps1_block + (sectors_in_ps1_block * PS1_PAGE_SIZE), flushbuf, PS1_PAGE_SIZE);
-            ++sectors_in_ps1_block;
-            if (first_sector_in_ps1_block < 0) first_sector_in_ps1_block = sector;
-            last_sector_in_ps1_block = sector;
-            write_block = num_after == 0 || sectors_in_ps1_block == 64;
-            sector_to_next_block = false;
+        if (sectors_in_flushblock && sector != last_sector_in_flushblock + 1) {
+            defer_sector = true;
         } else {
-            write_block = true;
-            sector_to_next_block = true;
+            ++sectors_in_flushblock;
+            if (first_sector_in_flushblock < 0) first_sector_in_flushblock = sector;
+            last_sector_in_flushblock = sector;
         }
 
-        if (write_block) {
-            write_block = false;
+        if (defer_sector || num_after == 0 || sectors_in_flushblock == PS1_BLOCK_SIZE / PS1_PAGE_SIZE) {
+            ps1_cardman_write_block(flushblock, sectors_in_flushblock, first_sector_in_flushblock);
+            ++flushblocks_written;
+            sectors_in_flushblock = 0;
+            first_sector_in_flushblock = -1;
+            last_sector_in_flushblock = -1;
+        }
 
-            ps1_cardman_write_block(ps1_block, sectors_in_ps1_block, first_sector_in_ps1_block);
-            ++ps1_blocks_written;
-
-            if (sector_to_next_block) {
-                sector_to_next_block = false;
-                memcpy(ps1_block, flushbuf, PS1_PAGE_SIZE);
-                sectors_in_ps1_block = 1;
-                first_sector_in_ps1_block = sector;
-                last_sector_in_ps1_block = sector;
+        if (defer_sector) {
+            defer_sector = false;
+            if (num_after == 0) {
+                ps1_cardman_write_block(sector_content, 1, sector);
+                ++flushblocks_written;
             } else {
-                sectors_in_ps1_block = 0;
-                first_sector_in_ps1_block = -1;
-                last_sector_in_ps1_block = -1;
+                memcpy(flushblock, sector_content, PS1_PAGE_SIZE);
+                sectors_in_flushblock = 1;
+                first_sector_in_flushblock = sector;
+                last_sector_in_flushblock = sector;
             }
         }
 
@@ -165,7 +165,7 @@ void ps1_dirty_task(void) {
 
     // hit = the loop ran at least once
     if (hit) {
-        if (ps1_blocks_written) ps1_cardman_flush();
+        if (flushblocks_written) ps1_cardman_flush();
 
         uint64_t end = time_us_64();
 
