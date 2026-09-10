@@ -12,6 +12,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <stdbool.h>
 
 spin_lock_t *ps1_dirty_spin_lock;
 volatile uint32_t ps1_dirty_lockout;
@@ -21,6 +22,8 @@ static int num_dirty;
 
 static uint8_t ps1_block[8192];
 static int sectors_in_ps1_block = 0;
+static int first_sector_in_ps1_block = -1;
+static int last_sector_in_ps1_block = -1;
 
 #define SWAP(a, b) do { \
     uint16_t tmp = a; \
@@ -88,6 +91,8 @@ void ps1_dirty_task(void) {
     int num_after = 0;
     int hit = 0;
     int ps1_blocks_written = 0;
+    bool write_block = false;
+    bool sector_to_next_block = false;
     uint64_t start = time_us_64();
     while (1) {
         if (!ps1_dirty_lockout_expired())
@@ -108,19 +113,41 @@ void ps1_dirty_task(void) {
         psram_wait_for_dma();
 #else
         uint8_t* page = ps1_mc_data_interface_get_page(sector);
-        memcpy(flushbuf, page, PS1_PAGE_SIZE);
+        memcpy(flushbuf, page, PS1_SECTOR_SIZE);
 #endif
         ps1_dirty_unlock();
 
         ++hit;
 
-        if (sectors_in_ps1_block && (num_after == 0 || sectors_in_ps1_block == 64)) {
-            ps1_cardman_write_block(sector, ps1_block, sectors_in_ps1_block);
-            sectors_in_ps1_block = 0;
-            ++ps1_blocks_written;
-        } else {
-            memcpy(ps1_block + sectors_in_ps1_block, flushbuf, PS1_PAGE_SIZE);
+        if (sectors_in_ps1_block == 0 || sector == last_sector_in_ps1_block + 1) {
+            memcpy(ps1_block + (sectors_in_ps1_block * PS1_SECTOR_SIZE), flushbuf, PS1_SECTOR_SIZE);
             ++sectors_in_ps1_block;
+            if (first_sector_in_ps1_block < 0) first_sector_in_ps1_block = sector;
+            last_sector_in_ps1_block = sector;
+            write_block = num_after == 0 || sectors_in_ps1_block == 64;
+            sector_to_next_block = false;
+        } else {
+            write_block = true;
+            sector_to_next_block = true;
+        }
+
+        if (write_block) {
+            write_block = false;
+
+            ps1_cardman_write_block(ps1_block, sectors_in_ps1_block, first_sector_in_ps1_block);
+            ++ps1_blocks_written;
+
+            if (sector_to_next_block) {
+                sector_to_next_block = false;
+                memcpy(ps1_block, flushbuf, PS1_SECTOR_SIZE);
+                sectors_in_ps1_block = 1;
+                first_sector_in_ps1_block = sector;
+                last_sector_in_ps1_block = sector;
+            } else {
+                sectors_in_ps1_block = 0;
+                first_sector_in_ps1_block = -1;
+                last_sector_in_ps1_block = -1;
+            }
         }
 
         // QPRINTF("ps1 - write sector %d\n", sector);

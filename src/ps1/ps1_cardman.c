@@ -29,7 +29,6 @@
 
 
 #define CARD_SIZE (128 * 1024)
-#define PS1_SECTOR_SIZE 128
 static uint8_t flushbuf[PS1_SECTOR_SIZE];
 static int fd = -1;
 
@@ -154,11 +153,11 @@ int ps1_cardman_write_sector(int sector, void *buf512) {
     return 0;
 }
 
-int ps1_cardman_write_block(int sector, void *ps1_block, int sectors_in_ps1_block) {
+int ps1_cardman_write_block(void *ps1_block, int sectors_in_ps1_block, int first_sector_in_ps1_block) {
     if (fd < 0)
         return -1;
 
-    if (sd_seek(fd, sector * PS1_SECTOR_SIZE, SEEK_SET) != 0)
+    if (sd_seek(fd, first_sector_in_ps1_block * PS1_SECTOR_SIZE, SEEK_SET) != 0)
         return -1;
 
     if (sd_write(fd, ps1_block, sectors_in_ps1_block * PS1_SECTOR_SIZE) != sectors_in_ps1_block * PS1_SECTOR_SIZE)
