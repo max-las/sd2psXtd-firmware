@@ -163,9 +163,6 @@ int ps1_cardman_write_block(void *flushblock, int sectors_in_flushblock, int fir
     if (sd_write(fd, flushblock, sectors_in_flushblock * PS1_PAGE_SIZE) != sectors_in_flushblock * PS1_PAGE_SIZE)
         return -1;
 
-    if (sectors_in_flushblock == 1)
-        sd_seek(fd, 0, SEEK_SET);
-
     return 0;
 }
 
