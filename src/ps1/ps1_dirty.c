@@ -14,7 +14,7 @@
 #include <string.h>
 #include <stdbool.h>
 
-#define PS1_BLOCK_SIZE = 8192;
+#define PS1_BLOCK_SIZE 8192
 
 spin_lock_t *ps1_dirty_spin_lock;
 volatile uint32_t ps1_dirty_lockout;
