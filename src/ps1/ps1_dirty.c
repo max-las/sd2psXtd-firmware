@@ -113,14 +113,14 @@ void ps1_dirty_task(void) {
         psram_wait_for_dma();
 #else
         uint8_t* page = ps1_mc_data_interface_get_page(sector);
-        memcpy(flushbuf, page, PS1_SECTOR_SIZE);
+        memcpy(flushbuf, page, PS1_PAGE_SIZE);
 #endif
         ps1_dirty_unlock();
 
         ++hit;
 
         if (sectors_in_ps1_block == 0 || sector == last_sector_in_ps1_block + 1) {
-            memcpy(ps1_block + (sectors_in_ps1_block * PS1_SECTOR_SIZE), flushbuf, PS1_SECTOR_SIZE);
+            memcpy(ps1_block + (sectors_in_ps1_block * PS1_PAGE_SIZE), flushbuf, PS1_PAGE_SIZE);
             ++sectors_in_ps1_block;
             if (first_sector_in_ps1_block < 0) first_sector_in_ps1_block = sector;
             last_sector_in_ps1_block = sector;
@@ -139,7 +139,7 @@ void ps1_dirty_task(void) {
 
             if (sector_to_next_block) {
                 sector_to_next_block = false;
-                memcpy(ps1_block, flushbuf, PS1_SECTOR_SIZE);
+                memcpy(ps1_block, flushbuf, PS1_PAGE_SIZE);
                 sectors_in_ps1_block = 1;
                 first_sector_in_ps1_block = sector;
                 last_sector_in_ps1_block = sector;

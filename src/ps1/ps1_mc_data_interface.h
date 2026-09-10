@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define PS1_SECTOR_SIZE 128
+#define PS1_PAGE_SIZE 128
 
 // Core 1
 
