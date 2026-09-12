@@ -12,13 +12,15 @@
 #include <pico/platform.h>
 #include <stdio.h>
 
+#define FLUSHBUF_SIZE 8192
+
 spin_lock_t *ps2_dirty_spin_lock;
 volatile uint32_t ps2_dirty_lockout;
 int ps2_dirty_activity = 0;
 
 static int num_dirty;
 
-static uint8_t flushbuf[PS1_BLOCK_SIZE];
+static uint8_t flushbuf[FLUSHBUF_SIZE]; // MTODO: share with ps1 side
 static int flushbuf_sectors = 0;
 static int flushbuf_first_sector = -1;
 static int flushbuf_last_sector = -1;
@@ -131,7 +133,7 @@ void ps2_dirty_task(void) {
             flushbuf_last_sector = sector;
         }
 
-        if (contiguity_broken || num_after == 0 || flushbuf_sectors == PS2_BLOCK_SIZE / PS2_PAGE_SIZE) {
+        if (contiguity_broken || num_after == 0 || flushbuf_sectors == FLUSHBUF_SIZE / PS2_PAGE_SIZE) {
             // DPRINTF("ps2 - write sectors %d to %d\n", flushbuf_first_sector, flushbuf_last_sector);
             if (ps2_cardman_write_sectors(flushbuf, flushbuf_sectors, flushbuf_first_sector) == 0) {
                 ++writes;

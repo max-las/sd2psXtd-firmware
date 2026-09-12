@@ -5,6 +5,8 @@
 
 #define PS1_CARD_IDX_SPECIAL 0
 
+#define PS1_PAGE_SIZE 128
+
 typedef enum {
     PS1_CM_STATE_NAMED,
     PS1_CM_STATE_BOOT,

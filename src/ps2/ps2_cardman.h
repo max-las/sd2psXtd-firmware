@@ -20,6 +20,8 @@
 
 #define PS2_CARD_IDX_SPECIAL 0
 
+#define PS2_PAGE_SIZE 512
+
 typedef enum  {
     PS2_CM_STATE_NAMED,
     PS2_CM_STATE_BOOT,

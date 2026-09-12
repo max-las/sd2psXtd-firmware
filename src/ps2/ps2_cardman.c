@@ -174,13 +174,13 @@ int ps2_cardman_write_sector(int sector, void *buf512) {
 }
 
 int ps2_cardman_write_sectors(void *buffer, int sectors_count, int first_sector) {
-    if (fd < 0)
+    if (cardman_fd < 0)
         return -1;
 
-    if (sd_seek(fd, first_sector * PS2_PAGE_SIZE, SEEK_SET) != 0)
+    if (sd_seek(cardman_fd, first_sector * PS2_PAGE_SIZE, SEEK_SET) != 0)
         return -1;
 
-    if (sd_write(fd, buffer, sectors_count * PS2_PAGE_SIZE) != sectors_count * PS2_PAGE_SIZE)
+    if (sd_write(cardman_fd, buffer, sectors_count * PS2_PAGE_SIZE) != sectors_count * PS2_PAGE_SIZE)
         return -1;
 
     return 0;
