@@ -138,7 +138,7 @@ int ps1_cardman_read_sector(int sector, void *buf128) {
     return 0;
 }
 
-int ps1_cardman_write_block(void *buffer, int sectors_count, int first_sector) {
+int ps1_cardman_write_sectors(void *buffer, int sectors_count, int first_sector) {
     if (fd < 0)
         return -1;
 

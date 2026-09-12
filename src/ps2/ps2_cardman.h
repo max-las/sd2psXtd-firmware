@@ -33,6 +33,7 @@ void ps2_cardman_init(void);
 void ps2_cardman_task(void);
 int ps2_cardman_read_sector(int sector, void *buf512);
 int ps2_cardman_write_sector(int sector, void *buf512);
+int ps2_cardman_write_sectors(void *buffer, int sectors_count, int first_sector);
 bool ps2_cardman_is_sector_available(int sector);
 void ps2_cardman_mark_sector_available(int sector);
 void ps2_cardman_set_priority_sector(int page_idx);

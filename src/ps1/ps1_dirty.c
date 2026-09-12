@@ -22,10 +22,10 @@ int ps1_dirty_activity;
 
 static int num_dirty;
 
-static uint8_t flushblock[PS1_BLOCK_SIZE];
-static int flushblock_sectors = 0;
-static int flushblock_first_sector = -1;
-static int flushblock_last_sector = -1;
+static uint8_t flushbuf[PS1_BLOCK_SIZE];
+static int flushbuf_sectors = 0;
+static int flushbuf_first_sector = -1;
+static int flushbuf_last_sector = -1;
 
 #define SWAP(a, b) do { \
     uint16_t tmp = a; \
@@ -91,7 +91,7 @@ void ps1_dirty_task(void) {
     int num_after = 0;
     int hit = 0;
     int writes = 0;
-    bool defer_sector = false;
+    bool contiguity_broken = false;
     uint64_t start = time_us_64();
     while (1) {
         if (!ps1_dirty_lockout_expired())
@@ -107,50 +107,50 @@ void ps1_dirty_task(void) {
             break;
         }
         num_after = num_dirty;
-        uint8_t *sector_content = flushblock + (flushblock_sectors * PS1_PAGE_SIZE);
+        uint8_t *sector_data = flushbuf + (flushbuf_sectors * PS1_PAGE_SIZE);
 #if WITH_PSRAM
-        psram_read_dma(sector * PS1_PAGE_SIZE, sector_content, PS1_PAGE_SIZE, NULL);
+        psram_read_dma(sector * PS1_PAGE_SIZE, sector_data, PS1_PAGE_SIZE, NULL);
         psram_wait_for_dma();
 #else
         uint8_t* page = ps1_mc_data_interface_get_page(sector);
-        memcpy(sector_content, page, PS1_PAGE_SIZE);
+        memcpy(sector_data, page, PS1_PAGE_SIZE);
 #endif
         ps1_dirty_unlock();
 
         ++hit;
 
-        if (flushblock_sectors && sector != flushblock_last_sector + 1) {
-            defer_sector = true;
+        if (flushbuf_sectors && sector != flushbuf_last_sector + 1) {
+            contiguity_broken = true;
         } else {
-            ++flushblock_sectors;
-            if (flushblock_first_sector < 0) flushblock_first_sector = sector;
-            flushblock_last_sector = sector;
+            ++flushbuf_sectors;
+            if (flushbuf_first_sector < 0) flushbuf_first_sector = sector;
+            flushbuf_last_sector = sector;
         }
 
-        if (defer_sector || num_after == 0 || flushblock_sectors == PS1_BLOCK_SIZE / PS1_PAGE_SIZE) {
-            QPRINTF("ps1 - write sectors %d to %d\n", flushblock_first_sector, flushblock_last_sector);
-            if (ps1_cardman_write_block(flushblock, flushblock_sectors, flushblock_first_sector) == 0) {
+        if (contiguity_broken || num_after == 0 || flushbuf_sectors == PS1_BLOCK_SIZE / PS1_PAGE_SIZE) {
+            QPRINTF("ps1 - write sectors %d to %d\n", flushbuf_first_sector, flushbuf_last_sector);
+            if (ps1_cardman_write_sectors(flushbuf, flushbuf_sectors, flushbuf_first_sector) == 0) {
                 ++writes;
             } else {
                 // TODO: do something if we get too many errors?
                 // for now lets push it back into the heap and try again later
-                QPRINTF("!! writing sectors 0x%x to 0x%x failed\n", flushblock_first_sector, flushblock_last_sector);
+                QPRINTF("!! writing sectors 0x%x to 0x%x failed\n", flushbuf_first_sector, flushbuf_last_sector);
                 ps1_dirty_lock();
-                for (int sector_to_retry = flushblock_first_sector; sector_to_retry <= flushblock_last_sector; sector_to_retry++) {
+                for (int sector_to_retry = flushbuf_first_sector; sector_to_retry <= flushbuf_last_sector; sector_to_retry++) {
                     ps1_dirty_mark(sector_to_retry);
                 }
                 ps1_dirty_unlock();
             }
-            flushblock_sectors = 0;
-            flushblock_first_sector = -1;
-            flushblock_last_sector = -1;
+            flushbuf_sectors = 0;
+            flushbuf_first_sector = -1;
+            flushbuf_last_sector = -1;
         }
 
-        if (defer_sector) {
-            defer_sector = false;
+        if (contiguity_broken) {
+            contiguity_broken = false;
             if (num_after == 0) {
                 QPRINTF("ps1 - write sector %d\n", sector);
-                if (ps1_cardman_write_block(sector_content, 1, sector) == 0) {
+                if (ps1_cardman_write_sectors(sector_data, 1, sector) == 0) {
                     ++writes;
                 } else {
                     // TODO: do something if we get too many errors?
@@ -161,10 +161,10 @@ void ps1_dirty_task(void) {
                     ps1_dirty_unlock();
                 }
             } else {
-                memcpy(flushblock, sector_content, PS1_PAGE_SIZE);
-                flushblock_sectors = 1;
-                flushblock_first_sector = sector;
-                flushblock_last_sector = sector;
+                memcpy(flushbuf, sector_data, PS1_PAGE_SIZE);
+                flushbuf_sectors = 1;
+                flushbuf_first_sector = sector;
+                flushbuf_last_sector = sector;
             }
         }
     }
@@ -173,7 +173,6 @@ void ps1_dirty_task(void) {
         if (writes) ps1_cardman_flush();
 
         uint64_t end = time_us_64();
-
         QPRINTF("remain to flush - %d - this one flushed %d and took %d ms\n", num_after, hit, (uint32_t)((end - start) / 1000));
     }
 
