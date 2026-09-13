@@ -100,7 +100,7 @@ static int write_flushbuf(void) {
         // for now lets push it back into the heap and try again later
         QPRINTF("!! writing sectors 0x%x to 0x%x failed\n",
                 flushbuf_first_sd_sector_addr / PS1_PAGE_SIZE,
-                flushbuf_last_sd_sector_addr / PS1_PAGE_SIZE);
+                (flushbuf_last_sd_sector_addr + SD_SECTOR_SIZE - PS1_PAGE_SIZE) / PS1_PAGE_SIZE);
         ps1_dirty_lock();
         for (int i = 0; i < flushbuf_ps1_sectors_count; i++) {
             ps1_dirty_mark(flushbuf_ps1_sectors[i]);
@@ -158,7 +158,9 @@ void ps1_dirty_task(void) {
 
         ++hit;
 
-        if (flushbuf_sd_sectors_count > 0 && sd_sector_addr > flushbuf_last_sd_sector_addr + SD_SECTOR_SIZE) {
+        if (flushbuf_sd_sectors_count > 0 &&
+            (sd_sector_addr < flushbuf_first_sd_sector_addr ||
+             sd_sector_addr > flushbuf_last_sd_sector_addr + SD_SECTOR_SIZE)) {
             contiguity_broken = true;
         } else {
             if (sd_sector_addr > flushbuf_last_sd_sector_addr) {
