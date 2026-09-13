@@ -90,7 +90,7 @@ int ps1_dirty_get_marked(void) {
     return ret;
 }
 
-int write_flushbuf(void) {
+static int write_flushbuf(void) {
     int writes = 0;
 
     if (ps1_cardman_write_sd_sectors(flushbuf, flushbuf_sd_sectors_count, flushbuf_first_sd_sector_addr) == 0) {
