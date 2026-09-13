@@ -24,11 +24,11 @@ int ps1_dirty_activity;
 static int num_dirty;
 
 static uint8_t flushbuf[FLUSHBUF_SIZE];
-static uint flushbuf_sd_sectors_count = 0;
+static int flushbuf_sd_sectors_count = 0;
 static int flushbuf_first_sd_sector_addr = -1;
 static int flushbuf_last_sd_sector_addr = -1;
-static uint flushbuf_ps1_sectors[FLUSHBUF_SIZE / PS1_PAGE_SIZE];
-static uint flushbuf_ps1_sectors_count = 0;
+static int flushbuf_ps1_sectors[FLUSHBUF_SIZE / PS1_PAGE_SIZE];
+static int flushbuf_ps1_sectors_count = 0;
 
 #define SWAP(a, b) do { \
     uint16_t tmp = a; \
@@ -138,8 +138,8 @@ void ps1_dirty_task(void) {
         }
 
         num_after = num_dirty;
-        uint memcard_sector_addr = sector * PS1_PAGE_SIZE;
-        uint sd_sector_addr = memcard_sector_addr - (memcard_sector_addr % SD_SECTOR_SIZE);
+        int memcard_sector_addr = sector * PS1_PAGE_SIZE;
+        int sd_sector_addr = memcard_sector_addr - (memcard_sector_addr % SD_SECTOR_SIZE);
         uint8_t *sd_sector_data = flushbuf + (flushbuf_sd_sectors_count * SD_SECTOR_SIZE);
         if (sd_sector_addr > flushbuf_last_sd_sector_addr) {
 #if WITH_PSRAM
@@ -161,7 +161,7 @@ void ps1_dirty_task(void) {
         if (flushbuf_sd_sectors_count > 0 && sd_sector_addr > flushbuf_last_sd_sector_addr + SD_SECTOR_SIZE) {
             contiguity_broken = true;
         } else {
-            if sd_sector_addr > flushbuf_last_sd_sector_addr {
+            if (sd_sector_addr > flushbuf_last_sd_sector_addr) {
                 ++flushbuf_sd_sectors_count;
                 if (flushbuf_first_sd_sector_addr < 0) flushbuf_first_sd_sector_addr = sd_sector_addr;
                 flushbuf_last_sd_sector_addr = sd_sector_addr;
