@@ -7,13 +7,13 @@
 #include "bigmem.h"
 #define dirty_heap bigmem.ps2.dirty_heap
 #define dirty_map bigmem.ps2.dirty_map
+#define flushbuf dirty_flushbuf
+#define FLUSHBUF_SIZE DIRTY_FLUSHBUF_SIZE
 
 #include <hardware/sync.h>
 #include <pico/platform.h>
 #include <stdio.h>
 #include <string.h>
-
-#define FLUSHBUF_SIZE 8192
 
 spin_lock_t *ps2_dirty_spin_lock;
 volatile uint32_t ps2_dirty_lockout;
@@ -21,7 +21,6 @@ int ps2_dirty_activity = 0;
 
 static int num_dirty;
 
-static uint8_t flushbuf[FLUSHBUF_SIZE]; // MTODO: share with ps1 side
 static int flushbuf_sectors_count = 0;
 static int flushbuf_first_sector_addr = -1;
 static int flushbuf_last_sector_addr = -1;
@@ -112,11 +111,11 @@ static int write_flushbuf(void) {
         DPRINTF("!! writing sectors 0x%x to 0x%x failed\n",
                 flushbuf_first_sector_addr / PS2_PAGE_SIZE,
                 flushbuf_last_sector_addr / PS2_PAGE_SIZE);
-        ps1_dirty_lock();
+        ps2_dirty_lock();
         for (int sector_addr = flushbuf_first_sector_addr; sector_addr <= flushbuf_last_sector_addr; sector_addr += 512) {
             ps2_dirty_mark(sector_addr / PS2_PAGE_SIZE);
         }
-        ps1_dirty_unlock();
+        ps2_dirty_unlock();
     }
     flushbuf_sectors_count = 0;
     flushbuf_first_sector_addr = -1;

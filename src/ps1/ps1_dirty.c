@@ -9,12 +9,12 @@
 #include "bigmem.h"
 #define dirty_heap bigmem.ps1.dirty_heap
 #define dirty_map bigmem.ps1.dirty_map
+#define flushbuf dirty_flushbuf
+#define FLUSHBUF_SIZE DIRTY_FLUSHBUF_SIZE
 
 #include <stdio.h>
 #include <string.h>
 #include <stdbool.h>
-
-#define FLUSHBUF_SIZE 8192
 
 spin_lock_t *ps1_dirty_spin_lock;
 volatile uint32_t ps1_dirty_lockout;
