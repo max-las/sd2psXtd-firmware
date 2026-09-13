@@ -15,6 +15,7 @@
 #include <stdbool.h>
 
 #define FLUSHBUF_SIZE 8192
+#define SD_SECTOR_SIZE 512
 
 spin_lock_t *ps1_dirty_spin_lock;
 volatile uint32_t ps1_dirty_lockout;
@@ -137,16 +138,19 @@ void ps1_dirty_task(void) {
         }
 
         num_after = num_dirty;
-        int memcard_sector_addr = sector * PS1_PAGE_SIZE;
-        int sd_sector_addr = memcard_sector_addr - (memcard_sector_addr % 512);
-        uint8_t *sd_sector_data = flushbuf + (flushbuf_sd_sectors_count * 512);
+        uint memcard_sector_addr = sector * PS1_PAGE_SIZE;
+        uint sd_sector_addr = memcard_sector_addr - (memcard_sector_addr % SD_SECTOR_SIZE);
+        uint8_t *sd_sector_data = flushbuf + (flushbuf_sd_sectors_count * SD_SECTOR_SIZE);
         if (sd_sector_addr > flushbuf_last_sd_sector_addr) {
 #if WITH_PSRAM
-            psram_read_dma(sd_sector_addr, sd_sector_data, 512, NULL);
+            psram_read_dma(sd_sector_addr, sd_sector_data, SD_SECTOR_SIZE, NULL);
             psram_wait_for_dma();
 #else
-            uint8_t* page = ps1_mc_data_interface_get_page(sector); // MTODO
-            memcpy(sd_sector_data, page, PS1_PAGE_SIZE);
+            for (int cursor = 0; cursor < SD_SECTOR_SIZE; cursor += PS1_PAGE_SIZE) {
+                uint32_t target = (sd_sector_addr + cursor) / PS1_PAGE_SIZE;
+                uint8_t *page = ps1_mc_data_interface_get_page(target);
+                memcpy(sd_sector_data + cursor, page, PS1_PAGE_SIZE);
+            }
 #endif
         }
 
@@ -154,7 +158,7 @@ void ps1_dirty_task(void) {
 
         ++hit;
 
-        if (flushbuf_sd_sectors_count > 0 && sd_sector_addr > flushbuf_last_sd_sector_addr + 512) {
+        if (flushbuf_sd_sectors_count > 0 && sd_sector_addr > flushbuf_last_sd_sector_addr + SD_SECTOR_SIZE) {
             contiguity_broken = true;
         } else {
             if sd_sector_addr > flushbuf_last_sd_sector_addr {
@@ -166,12 +170,12 @@ void ps1_dirty_task(void) {
             ++flushbuf_ps1_sectors_count;
         }
 
-        if (contiguity_broken || num_after == 0 || flushbuf_sd_sectors_count == FLUSHBUF_SIZE / 512) {
+        if (contiguity_broken || num_after == 0 || flushbuf_sd_sectors_count == FLUSHBUF_SIZE / SD_SECTOR_SIZE) {
             writes += write_flushbuf();
         }
 
         if (contiguity_broken) {
-            memcpy(flushbuf, sd_sector_data, 512);
+            memcpy(flushbuf, sd_sector_data, SD_SECTOR_SIZE);
             flushbuf_sd_sectors_count = 1;
             flushbuf_first_sd_sector_addr = sd_sector_addr;
             flushbuf_last_sd_sector_addr = sd_sector_addr;
