@@ -22,9 +22,9 @@ int ps2_dirty_activity = 0;
 static int num_dirty;
 
 static uint8_t flushbuf[FLUSHBUF_SIZE]; // MTODO: share with ps1 side
-static int flushbuf_sectors = 0;
-static int flushbuf_first_sector = -1;
-static int flushbuf_last_sector = -1;
+static int flushbuf_sectors_count = 0;
+static int flushbuf_first_sector_addr = -1;
+static int flushbuf_last_sector_addr = -1;
 
 #define SWAP(a, b) do { \
     uint16_t tmp = a; \
@@ -98,6 +98,33 @@ int ps2_dirty_get_marked(void) {
     return ret;
 }
 
+static int write_flushbuf(void) {
+    int writes = 0;
+
+    if (ps2_cardman_write_sectors(flushbuf, flushbuf_sectors_count, flushbuf_first_sector_addr) == 0) {
+        ++writes;
+        for (int sector_addr = flushbuf_first_sector_addr; sector_addr <= flushbuf_last_sector_addr; sector_addr += 512) {
+            ps2_history_tracker_registerPageWrite(sector_addr / PS2_PAGE_SIZE);
+        }
+    } else {
+        // TODO: do something if we get too many errors?
+        // for now lets push it back into the heap and try again later
+        DPRINTF("!! writing sectors 0x%x to 0x%x failed\n",
+                flushbuf_first_sector_addr / PS2_PAGE_SIZE,
+                flushbuf_last_sector_addr / PS2_PAGE_SIZE);
+        ps1_dirty_lock();
+        for (int sector_addr = flushbuf_first_sector_addr; sector_addr <= flushbuf_last_sector_addr; sector_addr += 512) {
+            ps2_dirty_mark(sector_addr / PS2_PAGE_SIZE);
+        }
+        ps1_dirty_unlock();
+    }
+    flushbuf_sectors_count = 0;
+    flushbuf_first_sector_addr = -1;
+    flushbuf_last_sector_addr = -1;
+
+    return writes;
+}
+
 /* this goes through blocks in psram marked as dirty and flushes them to sd */
 void ps2_dirty_task(void) {
     int num_after = 0;
@@ -105,6 +132,7 @@ void ps2_dirty_task(void) {
     int writes = 0;
     bool contiguity_broken = false;
     uint64_t start = time_us_64();
+
     while (1) {
         if (!ps2_dirty_lockout_expired())
             break;
@@ -118,65 +146,35 @@ void ps2_dirty_task(void) {
             ps2_dirty_unlock();
             break;
         }
+
         num_after = num_dirty;
-        uint8_t *sector_data = flushbuf + (flushbuf_sectors * PS2_PAGE_SIZE);
-        psram_read_dma(sector * PS2_PAGE_SIZE, sector_data, PS2_PAGE_SIZE, NULL);
+        int sector_addr = sector * PS2_PAGE_SIZE;
+        uint8_t *sector_data = flushbuf + (flushbuf_sectors_count * PS2_PAGE_SIZE);
+        psram_read_dma(sector_addr, sector_data, PS2_PAGE_SIZE, NULL);
         psram_wait_for_dma();
         ps2_dirty_unlock();
 
         ++hit;
 
-        if (flushbuf_sectors && sector != flushbuf_last_sector + 1) {
+        if (flushbuf_sectors_count > 0 && sector_addr != flushbuf_last_sector_addr + PS2_PAGE_SIZE) {
             contiguity_broken = true;
         } else {
-            ++flushbuf_sectors;
-            if (flushbuf_first_sector < 0) flushbuf_first_sector = sector;
-            flushbuf_last_sector = sector;
+            ++flushbuf_sectors_count;
+            if (flushbuf_first_sector_addr < 0) flushbuf_first_sector_addr = sector_addr;
+            flushbuf_last_sector_addr = sector_addr;
         }
 
-        if (contiguity_broken || num_after == 0 || flushbuf_sectors == FLUSHBUF_SIZE / PS2_PAGE_SIZE) {
-            // DPRINTF("ps2 - write sectors %d to %d\n", flushbuf_first_sector, flushbuf_last_sector);
-            if (ps2_cardman_write_sectors(flushbuf, flushbuf_sectors, flushbuf_first_sector) == 0) {
-                ++writes;
-                for (int sector_to_track = flushbuf_first_sector; sector_to_track <= flushbuf_last_sector; sector_to_track++) {
-                    ps2_history_tracker_registerPageWrite(sector_to_track);
-                }
-            } else {
-                // TODO: do something if we get too many errors?
-                // for now lets push it back into the heap and try again later
-                DPRINTF("!! writing sectors 0x%x to 0x%x failed\n", flushbuf_first_sector, flushbuf_last_sector);
-                ps2_dirty_lock();
-                for (int sector_to_retry = flushbuf_first_sector; sector_to_retry <= flushbuf_last_sector; sector_to_retry++) {
-                    ps2_dirty_mark(sector_to_retry);
-                }
-                ps2_dirty_unlock();
-            }
-            flushbuf_sectors = 0;
-            flushbuf_first_sector = -1;
-            flushbuf_last_sector = -1;
+        if (contiguity_broken || num_after == 0 || flushbuf_sectors_count == FLUSHBUF_SIZE / PS2_PAGE_SIZE) {
+            writes += write_flushbuf();
         }
 
         if (contiguity_broken) {
+            memcpy(flushbuf, sector_data, PS2_PAGE_SIZE);
+            flushbuf_sectors_count = 1;
+            flushbuf_first_sector_addr = sector_addr;
+            flushbuf_last_sector_addr = sector_addr;
             contiguity_broken = false;
-            if (num_after == 0) {
-                // DPRINTF("ps2 - write sector %d\n", sector);
-                if (ps2_cardman_write_sectors(sector_data, 1, sector) == 0) {
-                    ++writes;
-                    ps2_history_tracker_registerPageWrite(sector);
-                } else {
-                    // TODO: do something if we get too many errors?
-                    // for now lets push it back into the heap and try again later
-                    DPRINTF("!! writing sector 0x%x failed\n", sector);
-                    ps2_dirty_lock();
-                    ps2_dirty_mark(sector);
-                    ps2_dirty_unlock();
-                }
-            } else {
-                memcpy(flushbuf, sector_data, PS2_PAGE_SIZE);
-                flushbuf_sectors = 1;
-                flushbuf_first_sector = sector;
-                flushbuf_last_sector = sector;
-            }
+            if (num_after == 0) writes += write_flushbuf();
         }
     }
 

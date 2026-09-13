@@ -6,6 +6,7 @@
 #define PS1_CARD_IDX_SPECIAL 0
 
 #define PS1_PAGE_SIZE 128
+#define SD_SECTOR_SIZE 512
 
 typedef enum {
     PS1_CM_STATE_NAMED,

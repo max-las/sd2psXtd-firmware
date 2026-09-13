@@ -145,7 +145,7 @@ int ps1_cardman_write_sd_sectors(void *buffer, int sectors_count, int first_sect
     if (sd_seek(fd, first_sector_addr, SEEK_SET) != 0)
         return -1;
 
-    if (sd_write(fd, buffer, sectors_count * 512) != sectors_count * 512)
+    if (sd_write(fd, buffer, sectors_count * SD_SECTOR_SIZE) != sectors_count * SD_SECTOR_SIZE)
         return -1;
 
     return 0;

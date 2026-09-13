@@ -15,7 +15,6 @@
 #include <stdbool.h>
 
 #define FLUSHBUF_SIZE 8192
-#define SD_SECTOR_SIZE 512
 
 spin_lock_t *ps1_dirty_spin_lock;
 volatile uint32_t ps1_dirty_lockout;
