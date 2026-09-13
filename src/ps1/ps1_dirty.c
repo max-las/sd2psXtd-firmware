@@ -14,7 +14,7 @@
 #include <string.h>
 #include <stdbool.h>
 
-#define PS1_BLOCK_SIZE 8192
+#define FLUSHBUF_SIZE 8192
 
 spin_lock_t *ps1_dirty_spin_lock;
 volatile uint32_t ps1_dirty_lockout;
@@ -22,10 +22,12 @@ int ps1_dirty_activity;
 
 static int num_dirty;
 
-static uint8_t flushbuf[PS1_BLOCK_SIZE];
-static int flushbuf_sectors = 0;
-static int flushbuf_first_sector = -1;
-static int flushbuf_last_sector = -1;
+static uint8_t flushbuf[FLUSHBUF_SIZE];
+static uint flushbuf_sd_sectors_count = 0;
+static int flushbuf_first_sd_sector_addr = -1;
+static int flushbuf_last_sd_sector_addr = -1;
+static uint flushbuf_ps1_sectors[FLUSHBUF_SIZE / PS1_PAGE_SIZE];
+static uint flushbuf_ps1_sectors_count = 0;
 
 #define SWAP(a, b) do { \
     uint16_t tmp = a; \
@@ -87,12 +89,38 @@ int ps1_dirty_get_marked(void) {
     return ret;
 }
 
+int write_flushbuf(void) {
+    int writes = 0;
+
+    if (ps1_cardman_write_sd_sectors(flushbuf, flushbuf_sd_sectors_count, flushbuf_first_sd_sector_addr) == 0) {
+        ++writes;
+    } else {
+        // TODO: do something if we get too many errors?
+        // for now lets push it back into the heap and try again later
+        QPRINTF("!! writing sectors 0x%x to 0x%x failed\n",
+                flushbuf_first_sd_sector_addr / PS1_PAGE_SIZE,
+                flushbuf_last_sd_sector_addr / PS1_PAGE_SIZE);
+        ps1_dirty_lock();
+        for (int i = 0; i < flushbuf_ps1_sectors_count; i++) {
+            ps1_dirty_mark(flushbuf_ps1_sectors[i]);
+        }
+        ps1_dirty_unlock();
+    }
+    flushbuf_ps1_sectors_count = 0;
+    flushbuf_sd_sectors_count = 0;
+    flushbuf_first_sd_sector_addr = -1;
+    flushbuf_last_sd_sector_addr = -1;
+
+    return writes;
+}
+
 void ps1_dirty_task(void) {
     int num_after = 0;
     int hit = 0;
     int writes = 0;
     bool contiguity_broken = false;
     uint64_t start = time_us_64();
+
     while (1) {
         if (!ps1_dirty_lockout_expired())
             break;
@@ -101,71 +129,56 @@ void ps1_dirty_task(void) {
             break;
 
         ps1_dirty_lock();
+
         int sector = ps1_dirty_get_marked();
         if (sector == -1) {
             ps1_dirty_unlock();
             break;
         }
+
         num_after = num_dirty;
-        uint8_t *sector_data = flushbuf + (flushbuf_sectors * PS1_PAGE_SIZE);
+        int memcard_sector_addr = sector * PS1_PAGE_SIZE;
+        int sd_sector_addr = memcard_sector_addr - (memcard_sector_addr % 512);
+        uint8_t *sd_sector_data = flushbuf + (flushbuf_sd_sectors_count * 512);
+        if (sd_sector_addr > flushbuf_last_sd_sector_addr) {
 #if WITH_PSRAM
-        psram_read_dma(sector * PS1_PAGE_SIZE, sector_data, PS1_PAGE_SIZE, NULL);
-        psram_wait_for_dma();
+            psram_read_dma(sd_sector_addr, sd_sector_data, 512, NULL);
+            psram_wait_for_dma();
 #else
-        uint8_t* page = ps1_mc_data_interface_get_page(sector);
-        memcpy(sector_data, page, PS1_PAGE_SIZE);
+            uint8_t* page = ps1_mc_data_interface_get_page(sector); // MTODO
+            memcpy(sd_sector_data, page, PS1_PAGE_SIZE);
 #endif
+        }
+
         ps1_dirty_unlock();
 
         ++hit;
 
-        if (flushbuf_sectors && sector != flushbuf_last_sector + 1) {
+        if (flushbuf_sd_sectors_count > 0 && sd_sector_addr > flushbuf_last_sd_sector_addr + 512) {
             contiguity_broken = true;
         } else {
-            ++flushbuf_sectors;
-            if (flushbuf_first_sector < 0) flushbuf_first_sector = sector;
-            flushbuf_last_sector = sector;
+            if sd_sector_addr > flushbuf_last_sd_sector_addr {
+                ++flushbuf_sd_sectors_count;
+                if (flushbuf_first_sd_sector_addr < 0) flushbuf_first_sd_sector_addr = sd_sector_addr;
+                flushbuf_last_sd_sector_addr = sd_sector_addr;
+            }
+            flushbuf_ps1_sectors[flushbuf_ps1_sectors_count] = sector;
+            ++flushbuf_ps1_sectors_count;
         }
 
-        if (contiguity_broken || num_after == 0 || flushbuf_sectors == PS1_BLOCK_SIZE / PS1_PAGE_SIZE) {
-            QPRINTF("ps1 - write sectors %d to %d\n", flushbuf_first_sector, flushbuf_last_sector);
-            if (ps1_cardman_write_sectors(flushbuf, flushbuf_sectors, flushbuf_first_sector) == 0) {
-                ++writes;
-            } else {
-                // TODO: do something if we get too many errors?
-                // for now lets push it back into the heap and try again later
-                QPRINTF("!! writing sectors 0x%x to 0x%x failed\n", flushbuf_first_sector, flushbuf_last_sector);
-                ps1_dirty_lock();
-                for (int sector_to_retry = flushbuf_first_sector; sector_to_retry <= flushbuf_last_sector; sector_to_retry++) {
-                    ps1_dirty_mark(sector_to_retry);
-                }
-                ps1_dirty_unlock();
-            }
-            flushbuf_sectors = 0;
-            flushbuf_first_sector = -1;
-            flushbuf_last_sector = -1;
+        if (contiguity_broken || num_after == 0 || flushbuf_sd_sectors_count == FLUSHBUF_SIZE / 512) {
+            writes += write_flushbuf();
         }
 
         if (contiguity_broken) {
+            memcpy(flushbuf, sd_sector_data, 512);
+            flushbuf_sd_sectors_count = 1;
+            flushbuf_first_sd_sector_addr = sd_sector_addr;
+            flushbuf_last_sd_sector_addr = sd_sector_addr;
+            flushbuf_ps1_sectors[0] = sector;
+            flushbuf_ps1_sectors_count = 1;
             contiguity_broken = false;
-            if (num_after == 0) {
-                QPRINTF("ps1 - write sector %d\n", sector);
-                if (ps1_cardman_write_sectors(sector_data, 1, sector) == 0) {
-                    ++writes;
-                } else {
-                    // TODO: do something if we get too many errors?
-                    // for now lets push it back into the heap and try again later
-                    QPRINTF("!! writing sector 0x%x failed\n", sector);
-                    ps1_dirty_lock();
-                    ps1_dirty_mark(sector);
-                    ps1_dirty_unlock();
-                }
-            } else {
-                memcpy(flushbuf, sector_data, PS1_PAGE_SIZE);
-                flushbuf_sectors = 1;
-                flushbuf_first_sector = sector;
-                flushbuf_last_sector = sector;
-            }
+            if (num_after == 0) writes += write_flushbuf();
         }
     }
 

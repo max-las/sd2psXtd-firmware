@@ -16,7 +16,7 @@ typedef enum {
 
 void ps1_cardman_init(void);
 int ps1_cardman_read_sector(int sector, void *buf128);
-int ps1_cardman_write_sectors(void *buffer, int sectors_count, int first_sector);
+int ps1_cardman_write_sd_sectors(void *buffer, int sectors_count, int first_sector_addr);
 void ps1_cardman_flush(void);
 void ps1_cardman_open(void);
 bool ps1_cardman_needs_update(void);
