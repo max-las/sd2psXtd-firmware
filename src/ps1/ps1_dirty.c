@@ -22,7 +22,6 @@ int ps1_dirty_activity;
 
 static int num_dirty;
 
-static uint8_t flushbuf[FLUSHBUF_SIZE];
 static int flushbuf_sd_sectors_count = 0;
 static int flushbuf_first_sd_sector_addr = -1;
 static int flushbuf_last_sd_sector_addr = -1;
