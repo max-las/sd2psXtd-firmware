@@ -173,7 +173,7 @@ void ps1_dirty_task(void) {
         if (writes) ps1_cardman_flush();
 
         uint64_t end = time_us_64();
-        QPRINTF("remain to flush - %d - this one flushed %d and took %d ms\n", num_after, hit, (uint32_t)((end - start) / 1000));
+        QPRINTF("remain to flush - %d - this one flushed %d and took %u ms\n", num_after, hit, (uint32_t)((end - start) / 1000));
     }
 
     if (num_after || !ps1_dirty_lockout_expired())

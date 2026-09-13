@@ -11,6 +11,7 @@
 #include <hardware/sync.h>
 #include <pico/platform.h>
 #include <stdio.h>
+#include <string.h>
 
 #define FLUSHBUF_SIZE 8192
 
@@ -183,7 +184,7 @@ void ps2_dirty_task(void) {
         if (writes) ps2_cardman_flush();
 
         uint64_t end = time_us_64();
-        DPRINTF("remain to flush - %d - this one flushed %d and took %d ms\n", num_after, hit, (uint32_t)((end - start) / 1000));
+        DPRINTF("remain to flush - %d - this one flushed %d and took %u ms\n", num_after, hit, (uint32_t)((end - start) / 1000));
     }
 
     if (num_after || !ps2_dirty_lockout_expired())
