@@ -23,8 +23,8 @@ int ps1_dirty_activity;
 static int num_dirty;
 
 static int flushbuf_sd_sectors_count = 0;
-static int flushbuf_first_sd_sector_offset = -1;
-static int flushbuf_last_sd_sector_offset = -1;
+static int flushbuf_first_sd_sector = -1;
+static int flushbuf_last_sd_sector = -1;
 static int flushbuf_ps1_sectors[FLUSHBUF_SIZE / PS1_PAGE_SIZE];
 static int flushbuf_ps1_sectors_count = 0;
 
@@ -89,12 +89,12 @@ int ps1_dirty_get_marked(void) {
 }
 
 static void write_flushbuf(void) {
-    if (ps1_cardman_write_sd_sectors(flushbuf, flushbuf_sd_sectors_count, flushbuf_first_sd_sector_offset) != 0) {
+    if (ps1_cardman_write_sd_sectors(flushbuf, flushbuf_sd_sectors_count, flushbuf_first_sd_sector) != 0) {
+        int first_ps1_sector = (flushbuf_first_sd_sector * SD_SECTOR_SIZE) / PS1_PAGE_SIZE;
+        int last_ps1_sector = ((flushbuf_last_sd_sector * SD_SECTOR_SIZE) + SD_SECTOR_SIZE - PS1_PAGE_SIZE) / PS1_PAGE_SIZE;
         // TODO: do something if we get too many errors?
         // for now lets push it back into the heap and try again later
-        QPRINTF("!! writing sectors 0x%x to 0x%x failed\n",
-                flushbuf_first_sd_sector_offset / PS1_PAGE_SIZE,
-                (flushbuf_last_sd_sector_offset + SD_SECTOR_SIZE - PS1_PAGE_SIZE) / PS1_PAGE_SIZE);
+        QPRINTF("!! writing sectors 0x%x to 0x%x failed\n", first_ps1_sector, last_ps1_sector);
         ps1_dirty_lock();
         for (int i = 0; i < flushbuf_ps1_sectors_count; i++) {
             ps1_dirty_mark(flushbuf_ps1_sectors[i]);
@@ -103,8 +103,8 @@ static void write_flushbuf(void) {
     }
     flushbuf_ps1_sectors_count = 0;
     flushbuf_sd_sectors_count = 0;
-    flushbuf_first_sd_sector_offset = -1;
-    flushbuf_last_sd_sector_offset = -1;
+    flushbuf_first_sd_sector = -1;
+    flushbuf_last_sd_sector = -1;
 }
 
 void ps1_dirty_task(void) {
@@ -123,16 +123,17 @@ void ps1_dirty_task(void) {
         ps1_dirty_lock();
 
         int sector = ps1_dirty_get_marked();
+        num_after = num_dirty;
         if (sector == -1) {
             ps1_dirty_unlock();
             break;
         }
 
-        num_after = num_dirty;
         int memcard_sector_offset = sector * PS1_PAGE_SIZE;
         int sd_sector_offset = memcard_sector_offset - (memcard_sector_offset % SD_SECTOR_SIZE);
-        uint8_t *sd_sector_slot = flushbuf + (flushbuf_sd_sectors_count * SD_SECTOR_SIZE)
-        if (sd_sector_offset == flushbuf_last_sd_sector_offset) sd_sector_slot -= SD_SECTOR_SIZE;
+        int sd_sector = sd_sector_offset / SD_SECTOR_SIZE;
+        uint8_t *sd_sector_slot = flushbuf + (flushbuf_sd_sectors_count * SD_SECTOR_SIZE);
+        if (sd_sector == flushbuf_last_sd_sector) sd_sector_slot -= SD_SECTOR_SIZE;
 #if WITH_PSRAM
         psram_read_dma(sd_sector_offset, sd_sector_slot, SD_SECTOR_SIZE, NULL);
         psram_wait_for_dma();
@@ -148,10 +149,10 @@ void ps1_dirty_task(void) {
         if (flushbuf_sd_sectors_count > 0 && sector != flushbuf_ps1_sectors[flushbuf_ps1_sectors_count - 1] + 1) {
             contiguity_broken = true;
         } else {
-            if (sd_sector_offset > flushbuf_last_sd_sector_offset) {
+            if (sd_sector != flushbuf_last_sd_sector) {
                 ++flushbuf_sd_sectors_count;
-                if (flushbuf_first_sd_sector_offset < 0) flushbuf_first_sd_sector_offset = sd_sector_offset;
-                flushbuf_last_sd_sector_offset = sd_sector_offset;
+                if (flushbuf_first_sd_sector < 0) flushbuf_first_sd_sector = sd_sector;
+                flushbuf_last_sd_sector = sd_sector;
             }
             flushbuf_ps1_sectors[flushbuf_ps1_sectors_count] = sector;
             ++flushbuf_ps1_sectors_count;
@@ -164,8 +165,8 @@ void ps1_dirty_task(void) {
         if (contiguity_broken) {
             memcpy(flushbuf, sd_sector_slot, SD_SECTOR_SIZE);
             flushbuf_sd_sectors_count = 1;
-            flushbuf_first_sd_sector_offset = sd_sector_offset;
-            flushbuf_last_sd_sector_offset = sd_sector_offset;
+            flushbuf_first_sd_sector = sd_sector;
+            flushbuf_last_sd_sector = sd_sector;
             flushbuf_ps1_sectors[0] = sector;
             flushbuf_ps1_sectors_count = 1;
             contiguity_broken = false;
