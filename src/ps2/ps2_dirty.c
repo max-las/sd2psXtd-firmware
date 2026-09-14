@@ -22,8 +22,8 @@ int ps2_dirty_activity = 0;
 static int num_dirty;
 
 static int flushbuf_sectors_count = 0;
-static int flushbuf_first_sector_addr = -1;
-static int flushbuf_last_sector_addr = -1;
+static int flushbuf_first_sector_offset = -1;
+static int flushbuf_last_sector_offset = -1;
 
 #define SWAP(a, b) do { \
     uint16_t tmp = a; \
@@ -98,25 +98,25 @@ int ps2_dirty_get_marked(void) {
 }
 
 static void write_flushbuf(void) {
-    if (ps2_cardman_write_sectors(flushbuf, flushbuf_sectors_count, flushbuf_first_sector_addr) == 0) {
-        for (int sector_addr = flushbuf_first_sector_addr; sector_addr <= flushbuf_last_sector_addr; sector_addr += PS2_PAGE_SIZE) {
-            ps2_history_tracker_registerPageWrite(sector_addr / PS2_PAGE_SIZE);
+    if (ps2_cardman_write_sectors(flushbuf, flushbuf_sectors_count, flushbuf_first_sector_offset) == 0) {
+        for (int sector_offset = flushbuf_first_sector_offset; sector_offset <= flushbuf_last_sector_offset; sector_offset += PS2_PAGE_SIZE) {
+            ps2_history_tracker_registerPageWrite(sector_offset / PS2_PAGE_SIZE);
         }
     } else {
         // TODO: do something if we get too many errors?
         // for now lets push it back into the heap and try again later
         DPRINTF("!! writing sectors 0x%x to 0x%x failed\n",
-                flushbuf_first_sector_addr / PS2_PAGE_SIZE,
-                flushbuf_last_sector_addr / PS2_PAGE_SIZE);
+                flushbuf_first_sector_offset / PS2_PAGE_SIZE,
+                flushbuf_last_sector_offset / PS2_PAGE_SIZE);
         ps2_dirty_lock();
-        for (int sector_addr = flushbuf_first_sector_addr; sector_addr <= flushbuf_last_sector_addr; sector_addr += PS2_PAGE_SIZE) {
-            ps2_dirty_mark(sector_addr / PS2_PAGE_SIZE);
+        for (int sector_offset = flushbuf_first_sector_offset; sector_offset <= flushbuf_last_sector_offset; sector_offset += PS2_PAGE_SIZE) {
+            ps2_dirty_mark(sector_offset / PS2_PAGE_SIZE);
         }
         ps2_dirty_unlock();
     }
     flushbuf_sectors_count = 0;
-    flushbuf_first_sector_addr = -1;
-    flushbuf_last_sector_addr = -1;
+    flushbuf_first_sector_offset = -1;
+    flushbuf_last_sector_offset = -1;
 }
 
 /* this goes through blocks in psram marked as dirty and flushes them to sd */
@@ -141,20 +141,20 @@ void ps2_dirty_task(void) {
         }
 
         num_after = num_dirty;
-        int sector_addr = sector * PS2_PAGE_SIZE;
-        uint8_t *sector_data = flushbuf + (flushbuf_sectors_count * PS2_PAGE_SIZE);
-        psram_read_dma(sector_addr, sector_data, PS2_PAGE_SIZE, NULL);
+        int sector_offset = sector * PS2_PAGE_SIZE;
+        uint8_t *sector_slot = flushbuf + (flushbuf_sectors_count * PS2_PAGE_SIZE);
+        psram_read_dma(sector_offset, sector_slot, PS2_PAGE_SIZE, NULL);
         psram_wait_for_dma();
         ps2_dirty_unlock();
 
         ++hit;
 
-        if (flushbuf_sectors_count > 0 && sector_addr != flushbuf_last_sector_addr + PS2_PAGE_SIZE) {
+        if (flushbuf_sectors_count > 0 && sector_offset != flushbuf_last_sector_offset + PS2_PAGE_SIZE) {
             contiguity_broken = true;
         } else {
             ++flushbuf_sectors_count;
-            if (flushbuf_first_sector_addr < 0) flushbuf_first_sector_addr = sector_addr;
-            flushbuf_last_sector_addr = sector_addr;
+            if (flushbuf_first_sector_offset < 0) flushbuf_first_sector_offset = sector_offset;
+            flushbuf_last_sector_offset = sector_offset;
         }
 
         if (contiguity_broken || flushbuf_sectors_count == FLUSHBUF_SIZE / PS2_PAGE_SIZE) {
@@ -162,10 +162,10 @@ void ps2_dirty_task(void) {
         }
 
         if (contiguity_broken) {
-            memcpy(flushbuf, sector_data, PS2_PAGE_SIZE);
+            memcpy(flushbuf, sector_slot, PS2_PAGE_SIZE);
             flushbuf_sectors_count = 1;
-            flushbuf_first_sector_addr = sector_addr;
-            flushbuf_last_sector_addr = sector_addr;
+            flushbuf_first_sector_offset = sector_offset;
+            flushbuf_last_sector_offset = sector_offset;
             contiguity_broken = false;
         }
     }

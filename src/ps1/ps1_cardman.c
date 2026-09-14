@@ -138,11 +138,11 @@ int ps1_cardman_read_sector(int sector, void *buf128) {
     return 0;
 }
 
-int ps1_cardman_write_sd_sectors(void *buffer, int sectors_count, int first_sector_addr) {
+int ps1_cardman_write_sd_sectors(void *buffer, int sectors_count, int first_sector_offset) {
     if (fd < 0)
         return -1;
 
-    if (sd_seek(fd, first_sector_addr, SEEK_SET) != 0)
+    if (sd_seek(fd, first_sector_offset, SEEK_SET) != 0)
         return -1;
 
     if (sd_write(fd, buffer, sectors_count * SD_SECTOR_SIZE) != sectors_count * SD_SECTOR_SIZE)
