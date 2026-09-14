@@ -97,12 +97,9 @@ int ps2_dirty_get_marked(void) {
     return ret;
 }
 
-static int write_flushbuf(void) {
-    int writes = 0;
-
+static void write_flushbuf(void) {
     if (ps2_cardman_write_sectors(flushbuf, flushbuf_sectors_count, flushbuf_first_sector_addr) == 0) {
-        ++writes;
-        for (int sector_addr = flushbuf_first_sector_addr; sector_addr <= flushbuf_last_sector_addr; sector_addr += 512) {
+        for (int sector_addr = flushbuf_first_sector_addr; sector_addr <= flushbuf_last_sector_addr; sector_addr += PS2_PAGE_SIZE) {
             ps2_history_tracker_registerPageWrite(sector_addr / PS2_PAGE_SIZE);
         }
     } else {
@@ -112,7 +109,7 @@ static int write_flushbuf(void) {
                 flushbuf_first_sector_addr / PS2_PAGE_SIZE,
                 flushbuf_last_sector_addr / PS2_PAGE_SIZE);
         ps2_dirty_lock();
-        for (int sector_addr = flushbuf_first_sector_addr; sector_addr <= flushbuf_last_sector_addr; sector_addr += 512) {
+        for (int sector_addr = flushbuf_first_sector_addr; sector_addr <= flushbuf_last_sector_addr; sector_addr += PS2_PAGE_SIZE) {
             ps2_dirty_mark(sector_addr / PS2_PAGE_SIZE);
         }
         ps2_dirty_unlock();
@@ -120,15 +117,12 @@ static int write_flushbuf(void) {
     flushbuf_sectors_count = 0;
     flushbuf_first_sector_addr = -1;
     flushbuf_last_sector_addr = -1;
-
-    return writes;
 }
 
 /* this goes through blocks in psram marked as dirty and flushes them to sd */
 void ps2_dirty_task(void) {
     int num_after = 0;
     int hit = 0;
-    int writes = 0;
     bool contiguity_broken = false;
     uint64_t start = time_us_64();
 
@@ -164,7 +158,7 @@ void ps2_dirty_task(void) {
         }
 
         if (contiguity_broken || num_after == 0 || flushbuf_sectors_count == FLUSHBUF_SIZE / PS2_PAGE_SIZE) {
-            writes += write_flushbuf();
+            write_flushbuf();
         }
 
         if (contiguity_broken) {
@@ -173,12 +167,13 @@ void ps2_dirty_task(void) {
             flushbuf_first_sector_addr = sector_addr;
             flushbuf_last_sector_addr = sector_addr;
             contiguity_broken = false;
-            if (num_after == 0) writes += write_flushbuf();
         }
     }
 
+    if (flushbuf_sectors_count > 0) write_flushbuf();
+
     if (hit) {
-        if (writes) ps2_cardman_flush();
+        ps2_cardman_flush();
 
         uint64_t end = time_us_64();
         DPRINTF("remain to flush - %d - this one flushed %d and took %u ms\n", num_after, hit, (uint32_t)((end - start) / 1000));

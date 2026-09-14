@@ -88,12 +88,8 @@ int ps1_dirty_get_marked(void) {
     return ret;
 }
 
-static int write_flushbuf(void) {
-    int writes = 0;
-
-    if (ps1_cardman_write_sd_sectors(flushbuf, flushbuf_sd_sectors_count, flushbuf_first_sd_sector_addr) == 0) {
-        ++writes;
-    } else {
+static void write_flushbuf(void) {
+    if (ps1_cardman_write_sd_sectors(flushbuf, flushbuf_sd_sectors_count, flushbuf_first_sd_sector_addr) != 0) {
         // TODO: do something if we get too many errors?
         // for now lets push it back into the heap and try again later
         QPRINTF("!! writing sectors 0x%x to 0x%x failed\n",
@@ -109,14 +105,11 @@ static int write_flushbuf(void) {
     flushbuf_sd_sectors_count = 0;
     flushbuf_first_sd_sector_addr = -1;
     flushbuf_last_sd_sector_addr = -1;
-
-    return writes;
 }
 
 void ps1_dirty_task(void) {
     int num_after = 0;
     int hit = 0;
-    int writes = 0;
     bool contiguity_broken = false;
     uint64_t start = time_us_64();
 
@@ -156,9 +149,7 @@ void ps1_dirty_task(void) {
 
         ++hit;
 
-        if (flushbuf_sd_sectors_count > 0 &&
-            (sd_sector_addr < flushbuf_first_sd_sector_addr ||
-             sd_sector_addr > flushbuf_last_sd_sector_addr + SD_SECTOR_SIZE)) {
+        if (flushbuf_sd_sectors_count > 0 && sd_sector_addr > flushbuf_last_sd_sector_addr + SD_SECTOR_SIZE) {
             contiguity_broken = true;
         } else {
             if (sd_sector_addr > flushbuf_last_sd_sector_addr) {
@@ -171,7 +162,7 @@ void ps1_dirty_task(void) {
         }
 
         if (contiguity_broken || num_after == 0 || flushbuf_sd_sectors_count == FLUSHBUF_SIZE / SD_SECTOR_SIZE) {
-            writes += write_flushbuf();
+            write_flushbuf();
         }
 
         if (contiguity_broken) {
@@ -182,12 +173,13 @@ void ps1_dirty_task(void) {
             flushbuf_ps1_sectors[0] = sector;
             flushbuf_ps1_sectors_count = 1;
             contiguity_broken = false;
-            if (num_after == 0) writes += write_flushbuf();
         }
     }
 
+    if (flushbuf_sd_sectors_count > 0) write_flushbuf();
+
     if (hit) {
-        if (writes) ps1_cardman_flush();
+        ps1_cardman_flush();
 
         uint64_t end = time_us_64();
         QPRINTF("remain to flush - %d - this one flushed %d and took %u ms\n", num_after, hit, (uint32_t)((end - start) / 1000));
