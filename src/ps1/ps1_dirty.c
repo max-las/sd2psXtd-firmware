@@ -161,7 +161,7 @@ void ps1_dirty_task(void) {
             ++flushbuf_ps1_sectors_count;
         }
 
-        if (contiguity_broken || num_after == 0 || flushbuf_sd_sectors_count == FLUSHBUF_SIZE / SD_SECTOR_SIZE) {
+        if (contiguity_broken || flushbuf_sd_sectors_count == FLUSHBUF_SIZE / SD_SECTOR_SIZE) {
             write_flushbuf();
         }
 

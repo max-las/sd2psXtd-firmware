@@ -157,7 +157,7 @@ void ps2_dirty_task(void) {
             flushbuf_last_sector_addr = sector_addr;
         }
 
-        if (contiguity_broken || num_after == 0 || flushbuf_sectors_count == FLUSHBUF_SIZE / PS2_PAGE_SIZE) {
+        if (contiguity_broken || flushbuf_sectors_count == FLUSHBUF_SIZE / PS2_PAGE_SIZE) {
             write_flushbuf();
         }
 
