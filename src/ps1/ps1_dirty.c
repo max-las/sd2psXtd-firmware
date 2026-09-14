@@ -131,22 +131,21 @@ void ps1_dirty_task(void) {
         num_after = num_dirty;
         int memcard_sector_offset = sector * PS1_PAGE_SIZE;
         int sd_sector_offset = memcard_sector_offset - (memcard_sector_offset % SD_SECTOR_SIZE);
-        uint8_t *sd_sector_slot = flushbuf + (flushbuf_sd_sectors_count * SD_SECTOR_SIZE);
-        if (sd_sector_offset > flushbuf_last_sd_sector_offset) {
+        uint8_t *sd_sector_slot = flushbuf + (flushbuf_sd_sectors_count * SD_SECTOR_SIZE)
+        if (sd_sector_offset == flushbuf_last_sd_sector_offset) sd_sector_slot -= SD_SECTOR_SIZE;
 #if WITH_PSRAM
-            psram_read_dma(sd_sector_offset, sd_sector_slot, SD_SECTOR_SIZE, NULL);
-            psram_wait_for_dma();
+        psram_read_dma(sd_sector_offset, sd_sector_slot, SD_SECTOR_SIZE, NULL);
+        psram_wait_for_dma();
 #else
-            uint8_t *page = ps1_mc_data_interface_get_page(sd_sector_offset / PS1_PAGE_SIZE);
-            memcpy(sd_sector_slot, page, SD_SECTOR_SIZE);
+        uint8_t *page = ps1_mc_data_interface_get_page(sd_sector_offset / PS1_PAGE_SIZE);
+        memcpy(sd_sector_slot, page, SD_SECTOR_SIZE);
 #endif
-        }
 
         ps1_dirty_unlock();
 
         ++hit;
 
-        if (flushbuf_sd_sectors_count > 0 && sd_sector_offset > flushbuf_last_sd_sector_offset + SD_SECTOR_SIZE) {
+        if (flushbuf_sd_sectors_count > 0 && sector != flushbuf_ps1_sectors[flushbuf_ps1_sectors_count - 1] + 1) {
             contiguity_broken = true;
         } else {
             if (sd_sector_offset > flushbuf_last_sd_sector_offset) {
