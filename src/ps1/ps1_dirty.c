@@ -90,10 +90,10 @@ int ps1_dirty_get_marked(void) {
 
 static void write_flushbuf(void) {
     if (ps1_cardman_write_sd_sectors(flushbuf, flushbuf_sd_sectors_count, flushbuf_first_sd_sector) != 0) {
-        int first_ps1_sector = (flushbuf_first_sd_sector * SD_SECTOR_SIZE) / PS1_PAGE_SIZE;
-        int last_ps1_sector = ((flushbuf_last_sd_sector * SD_SECTOR_SIZE) + SD_SECTOR_SIZE - PS1_PAGE_SIZE) / PS1_PAGE_SIZE;
         // TODO: do something if we get too many errors?
         // for now lets push it back into the heap and try again later
+        int first_ps1_sector = (flushbuf_first_sd_sector * SD_SECTOR_SIZE) / PS1_PAGE_SIZE;
+        int last_ps1_sector = ((flushbuf_last_sd_sector * SD_SECTOR_SIZE) + SD_SECTOR_SIZE - PS1_PAGE_SIZE) / PS1_PAGE_SIZE;
         QPRINTF("!! writing sectors 0x%x to 0x%x failed\n", first_ps1_sector, last_ps1_sector);
         ps1_dirty_lock();
         for (int i = 0; i < flushbuf_ps1_sectors_count; i++) {
@@ -133,7 +133,8 @@ void ps1_dirty_task(void) {
         int sd_sector_offset = memcard_sector_offset - (memcard_sector_offset % SD_SECTOR_SIZE);
         int sd_sector = sd_sector_offset / SD_SECTOR_SIZE;
         uint8_t *sd_sector_slot = flushbuf + (flushbuf_sd_sectors_count * SD_SECTOR_SIZE);
-        if (sd_sector == flushbuf_last_sd_sector) sd_sector_slot -= SD_SECTOR_SIZE;
+        if (sector > flushbuf_ps1_sectors[flushbuf_ps1_sectors_count - 1] && sd_sector == flushbuf_last_sd_sector)
+            sd_sector_slot -= SD_SECTOR_SIZE;
 #if WITH_PSRAM
         psram_read_dma(sd_sector_offset, sd_sector_slot, SD_SECTOR_SIZE, NULL);
         psram_wait_for_dma();
@@ -146,7 +147,9 @@ void ps1_dirty_task(void) {
 
         ++hit;
 
-        if (flushbuf_sd_sectors_count > 0 && sector != flushbuf_ps1_sectors[flushbuf_ps1_sectors_count - 1] + 1) {
+        if (flushbuf_sd_sectors_count > 0 &&
+            (sector <= flushbuf_ps1_sectors[flushbuf_ps1_sectors_count - 1] ||
+             sd_sector > flushbuf_last_sd_sector + 1)) {
             contiguity_broken = true;
         } else {
             if (sd_sector != flushbuf_last_sd_sector) {
