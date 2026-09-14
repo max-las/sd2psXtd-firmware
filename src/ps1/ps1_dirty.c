@@ -137,11 +137,8 @@ void ps1_dirty_task(void) {
             psram_read_dma(sd_sector_offset, sd_sector_slot, SD_SECTOR_SIZE, NULL);
             psram_wait_for_dma();
 #else
-            for (int cursor = 0; cursor < SD_SECTOR_SIZE; cursor += PS1_PAGE_SIZE) {
-                uint32_t target = (sd_sector_offset + cursor) / PS1_PAGE_SIZE;
-                uint8_t *page = ps1_mc_data_interface_get_page(target);
-                memcpy(sd_sector_slot + cursor, page, PS1_PAGE_SIZE);
-            }
+            uint8_t *page = ps1_mc_data_interface_get_page(sd_sector_offset / PS1_PAGE_SIZE);
+            memcpy(sd_sector_slot, page, SD_SECTOR_SIZE);
 #endif
         }
 
