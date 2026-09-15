@@ -106,7 +106,7 @@ static void write_flushbuf(void) {
     int first_sector_to_check = (flushbuf_last_sd_block * SD_BLOCK_SIZE) / PS2_PAGE_SIZE;
     int sectors_to_check = SD_BLOCK_SIZE / PS2_PAGE_SIZE;
     uint8_t *last_sd_block_slot = flushbuf + ((flushbuf_sd_blocks_count - 1) * SD_BLOCK_SIZE);
-    for(int i = 0; sector < sectors_to_check; i++) {
+    for(int i = 0; i < sectors_to_check; i++) {
         int sector = first_sector_to_check + i;
         if (!ps2_cardman_is_sector_available(sector)) {
             uint8_t *sector_slot = last_sd_block_slot + (i * PS2_PAGE_SIZE);
