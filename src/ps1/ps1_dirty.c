@@ -107,18 +107,18 @@ static void write_flushbuf(void) {
     flushbuf_last_sd_block = -1;
 }
 
-static void register_flushbuf_sd_block(sd_block) {
+static void register_flushbuf_sd_block(int sd_block) {
     ++flushbuf_sd_blocks_count;
     if (flushbuf_first_sd_block < 0) flushbuf_first_sd_block = sd_block;
     flushbuf_last_sd_block = sd_block;
-    memcpy(flushbuf_ps1_sectors + flushbuf_ps1_sectors_count * sizeof(flushbuf_ps1_sectors[0]),
+    memcpy(flushbuf_ps1_sectors + flushbuf_ps1_sectors_count,
            unmarked_ps1_sectors,
            unmarked_ps1_sectors_count * sizeof(unmarked_ps1_sectors[0]));
     flushbuf_ps1_sectors_count += unmarked_ps1_sectors_count;
     unmarked_ps1_sectors_count = 0;
 }
 
-static int sector_sd_block(sector) {
+static int sector_sd_block(int sector) {
     int sector_offset = sector * PS1_PAGE_SIZE;
     int sd_block_offset = sector_offset - (sector_offset % SD_BLOCK_SIZE);
     return sd_block_offset / SD_BLOCK_SIZE;
@@ -182,6 +182,7 @@ void ps1_dirty_task(void) {
         if (contiguity_broken) {
             memcpy(flushbuf, sd_block_slot, SD_BLOCK_SIZE);
             register_flushbuf_sd_block(sd_block);
+            contiguity_broken = false;
         }
     }
 

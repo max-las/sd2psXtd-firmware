@@ -7,7 +7,7 @@
     #define CACHE_SIZE 1024 * 128
 #endif
 
-#define DIRTY_FLUSHBUF_SIZE 512 * 2 * 8
+#define DIRTY_FLUSHBUF_SIZE (512 * 2 * 8)
 
 typedef union {
     struct {
