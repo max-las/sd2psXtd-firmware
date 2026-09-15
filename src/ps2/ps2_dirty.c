@@ -14,6 +14,7 @@
 #include <pico/platform.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdbool.h>
 
 spin_lock_t *ps2_dirty_spin_lock;
 volatile uint32_t ps2_dirty_lockout;
