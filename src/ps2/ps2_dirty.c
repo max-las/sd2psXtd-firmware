@@ -103,6 +103,17 @@ int ps2_dirty_get_marked(void) {
 }
 
 static void write_flushbuf(void) {
+    int first_sector_to_check = (flushbuf_last_sd_block * SD_BLOCK_SIZE) / PS2_PAGE_SIZE;
+    int sectors_to_check = SD_BLOCK_SIZE / PS2_PAGE_SIZE;
+    uint8_t *last_sd_block_slot = flushbuf + ((flushbuf_sd_blocks_count - 1) * SD_BLOCK_SIZE);
+    for(int i = 0; sector < sectors_to_check; i++) {
+        int sector = first_sector_to_check + i;
+        if (!ps2_cardman_is_sector_available(sector)) {
+            uint8_t *sector_slot = last_sd_block_slot + (i * PS2_PAGE_SIZE);
+            ps2_cardman_read_sector(sector, sector_slot);
+        }
+    }
+
     if (ps2_cardman_write_sd_blocks(flushbuf, flushbuf_sd_blocks_count, flushbuf_first_sd_block) == 0) {
         for (int i = 0; i < flushbuf_ps2_sectors_count; i++) {
             ps2_history_tracker_registerPageWrite(flushbuf_ps2_sectors[i]);
