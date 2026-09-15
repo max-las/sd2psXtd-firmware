@@ -196,7 +196,7 @@ void ps2_dirty_task(void) {
         }
     }
 
-    if (flushbuf_sectors_count > 0) write_flushbuf();
+    if (flushbuf_sd_blocks_count > 0) write_flushbuf();
 
     if (hit) {
         ps2_cardman_flush();
