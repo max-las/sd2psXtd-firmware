@@ -22,11 +22,13 @@ int ps1_dirty_activity;
 
 static int num_dirty;
 
-static int flushbuf_sd_sectors_count = 0;
-static int flushbuf_first_sd_sector = -1;
-static int flushbuf_last_sd_sector = -1;
+static int flushbuf_sd_blocks_count = 0;
+static int flushbuf_first_sd_block = -1;
+static int flushbuf_last_sd_block = -1;
 static int flushbuf_ps1_sectors[FLUSHBUF_SIZE / PS1_PAGE_SIZE];
 static int flushbuf_ps1_sectors_count = 0;
+static int unmarked_ps1_sectors[SD_BLOCK_SIZE / PS1_PAGE_SIZE];
+static int unmarked_ps1_sectors_count = 0;
 
 #define SWAP(a, b) do { \
     uint16_t tmp = a; \
@@ -89,12 +91,10 @@ int ps1_dirty_get_marked(void) {
 }
 
 static void write_flushbuf(void) {
-    if (ps1_cardman_write_sd_sectors(flushbuf, flushbuf_sd_sectors_count, flushbuf_first_sd_sector) != 0) {
+    if (ps1_cardman_write_sd_blocks(flushbuf, flushbuf_sd_blocks_count, flushbuf_first_sd_block) != 0) {
         // TODO: do something if we get too many errors?
         // for now lets push it back into the heap and try again later
-        int first_ps1_sector = (flushbuf_first_sd_sector * SD_SECTOR_SIZE) / PS1_PAGE_SIZE;
-        int last_ps1_sector = ((flushbuf_last_sd_sector * SD_SECTOR_SIZE) + SD_SECTOR_SIZE - PS1_PAGE_SIZE) / PS1_PAGE_SIZE;
-        QPRINTF("!! writing sectors 0x%x to 0x%x failed\n", first_ps1_sector, last_ps1_sector);
+        QPRINTF("!! writing sd blocks 0x%x to 0x%x failed\n", flushbuf_first_sd_block, flushbuf_last_sd_block);
         ps1_dirty_lock();
         for (int i = 0; i < flushbuf_ps1_sectors_count; i++) {
             ps1_dirty_mark(flushbuf_ps1_sectors[i]);
@@ -102,9 +102,26 @@ static void write_flushbuf(void) {
         ps1_dirty_unlock();
     }
     flushbuf_ps1_sectors_count = 0;
-    flushbuf_sd_sectors_count = 0;
-    flushbuf_first_sd_sector = -1;
-    flushbuf_last_sd_sector = -1;
+    flushbuf_sd_blocks_count = 0;
+    flushbuf_first_sd_block = -1;
+    flushbuf_last_sd_block = -1;
+}
+
+static void register_flushbuf_sd_block(sd_block) {
+    ++flushbuf_sd_blocks_count;
+    if (flushbuf_first_sd_block < 0) flushbuf_first_sd_block = sd_block;
+    flushbuf_last_sd_block = sd_block;
+    memcpy(flushbuf_ps1_sectors + flushbuf_ps1_sectors_count * sizeof(flushbuf_ps1_sectors[0]),
+           unmarked_ps1_sectors,
+           unmarked_ps1_sectors_count * sizeof(unmarked_ps1_sectors[0]));
+    flushbuf_ps1_sectors_count += unmarked_ps1_sectors_count;
+    unmarked_ps1_sectors_count = 0;
+}
+
+static int sector_sd_block(sector) {
+    int sector_offset = sector * PS1_PAGE_SIZE;
+    int sd_block_offset = sector_offset - (sector_offset % SD_BLOCK_SIZE);
+    return sd_block_offset / SD_BLOCK_SIZE;
 }
 
 void ps1_dirty_task(void) {
@@ -122,60 +139,53 @@ void ps1_dirty_task(void) {
 
         ps1_dirty_lock();
 
-        int sector = ps1_dirty_get_marked();
-        num_after = num_dirty;
+        int sector, sd_block, next_sd_block;
+        do {
+            sector = ps1_dirty_get_marked();
+            num_after = num_dirty;
+            if (sector == -1) break;
+
+            unmarked_ps1_sectors[unmarked_ps1_sectors_count] = sector;
+            ++unmarked_ps1_sectors_count;
+            sd_block = sector_sd_block(sector);
+            next_sd_block = num_after == 0 ? -1 : sector_sd_block(dirty_heap[0]);
+        } while (next_sd_block == sd_block);
+
         if (sector == -1) {
             ps1_dirty_unlock();
             break;
         }
 
-        int memcard_sector_offset = sector * PS1_PAGE_SIZE;
-        int sd_sector_offset = memcard_sector_offset - (memcard_sector_offset % SD_SECTOR_SIZE);
-        int sd_sector = sd_sector_offset / SD_SECTOR_SIZE;
-        uint8_t *sd_sector_slot = flushbuf + (flushbuf_sd_sectors_count * SD_SECTOR_SIZE);
-        if (sd_sector == flushbuf_last_sd_sector) sd_sector_slot -= SD_SECTOR_SIZE;
+        uint8_t *sd_block_slot = flushbuf + (flushbuf_sd_blocks_count * SD_BLOCK_SIZE);
 #if WITH_PSRAM
-        psram_read_dma(sd_sector_offset, sd_sector_slot, SD_SECTOR_SIZE, NULL);
+        psram_read_dma(sd_block * SD_BLOCK_SIZE, sd_block_slot, SD_BLOCK_SIZE, NULL);
         psram_wait_for_dma();
 #else
-        uint8_t *page = ps1_mc_data_interface_get_page(sd_sector_offset / PS1_PAGE_SIZE);
-        memcpy(sd_sector_slot, page, SD_SECTOR_SIZE);
+        uint8_t *page = ps1_mc_data_interface_get_page((sd_block * SD_BLOCK_SIZE) / PS1_PAGE_SIZE);
+        memcpy(sd_block_slot, page, SD_BLOCK_SIZE);
 #endif
 
         ps1_dirty_unlock();
 
         ++hit;
 
-        if (flushbuf_sd_sectors_count > 0 &&
-            sd_sector != flushbuf_last_sd_sector &&
-            sd_sector != flushbuf_last_sd_sector + 1) {
+        if (flushbuf_sd_blocks_count > 0 && sd_block != flushbuf_last_sd_block + 1) {
             contiguity_broken = true;
         } else {
-            if (sd_sector != flushbuf_last_sd_sector) {
-                ++flushbuf_sd_sectors_count;
-                if (flushbuf_first_sd_sector < 0) flushbuf_first_sd_sector = sd_sector;
-                flushbuf_last_sd_sector = sd_sector;
-            }
-            flushbuf_ps1_sectors[flushbuf_ps1_sectors_count] = sector;
-            ++flushbuf_ps1_sectors_count;
+            register_flushbuf_sd_block(sd_block);
         }
 
-        if (contiguity_broken || flushbuf_sd_sectors_count == FLUSHBUF_SIZE / SD_SECTOR_SIZE) {
+        if (contiguity_broken || flushbuf_sd_blocks_count == FLUSHBUF_SIZE / SD_BLOCK_SIZE) {
             write_flushbuf();
         }
 
         if (contiguity_broken) {
-            memcpy(flushbuf, sd_sector_slot, SD_SECTOR_SIZE);
-            flushbuf_sd_sectors_count = 1;
-            flushbuf_first_sd_sector = sd_sector;
-            flushbuf_last_sd_sector = sd_sector;
-            flushbuf_ps1_sectors[0] = sector;
-            flushbuf_ps1_sectors_count = 1;
-            contiguity_broken = false;
+            memcpy(flushbuf, sd_block_slot, SD_BLOCK_SIZE);
+            register_flushbuf_sd_block(sd_block);
         }
     }
 
-    if (flushbuf_sd_sectors_count > 0) write_flushbuf();
+    if (flushbuf_sd_blocks_count > 0) write_flushbuf();
 
     if (hit) {
         ps1_cardman_flush();
