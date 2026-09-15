@@ -21,9 +21,13 @@ int ps2_dirty_activity = 0;
 
 static int num_dirty;
 
-static int flushbuf_sectors_count = 0;
-static int flushbuf_first_sector = -1;
-static int flushbuf_last_sector = -1;
+static int flushbuf_sd_blocks_count = 0;
+static int flushbuf_first_sd_block = -1;
+static int flushbuf_last_sd_block = -1;
+static int flushbuf_ps2_sectors[FLUSHBUF_SIZE / PS2_PAGE_SIZE];
+static int flushbuf_ps2_sectors_count = 0;
+static int unmarked_ps2_sectors[SD_BLOCK_SIZE / PS2_PAGE_SIZE];
+static int unmarked_ps2_sectors_count = 0;
 
 #define SWAP(a, b) do { \
     uint16_t tmp = a; \
@@ -98,23 +102,41 @@ int ps2_dirty_get_marked(void) {
 }
 
 static void write_flushbuf(void) {
-    if (ps2_cardman_write_sectors(flushbuf, flushbuf_sectors_count, flushbuf_first_sector) == 0) {
-        for (int sector = flushbuf_first_sector; sector <= flushbuf_last_sector; sector++) {
-            ps2_history_tracker_registerPageWrite(sector);
+    if (ps2_cardman_write_sd_blocks(flushbuf, flushbuf_sd_blocks_count, flushbuf_first_sd_block) == 0) {
+        for (int i = 0; i < flushbuf_ps2_sectors_count; i++) {
+            ps2_history_tracker_registerPageWrite(flushbuf_ps2_sectors[i]);
         }
     } else {
         // TODO: do something if we get too many errors?
         // for now lets push it back into the heap and try again later
-        DPRINTF("!! writing sectors 0x%x to 0x%x failed\n", flushbuf_first_sector, flushbuf_last_sector);
+        DPRINTF("!! writing sd blocks 0x%x to 0x%x failed\n", flushbuf_first_sd_block, flushbuf_last_sd_block);
         ps2_dirty_lock();
-        for (int sector = flushbuf_first_sector; sector <= flushbuf_last_sector; sector++) {
-            ps2_dirty_mark(sector);
+        for (int i = 0; i < flushbuf_ps2_sectors_count; i++) {
+            ps2_dirty_mark(flushbuf_ps2_sectors[i]);
         }
         ps2_dirty_unlock();
     }
-    flushbuf_sectors_count = 0;
-    flushbuf_first_sector = -1;
-    flushbuf_last_sector = -1;
+    flushbuf_ps2_sectors_count = 0;
+    flushbuf_sd_blocks_count = 0;
+    flushbuf_first_sd_block = -1;
+    flushbuf_last_sd_block = -1;
+}
+
+static void register_flushbuf_sd_block(int sd_block) {
+    ++flushbuf_sd_blocks_count;
+    if (flushbuf_first_sd_block < 0) flushbuf_first_sd_block = sd_block;
+    flushbuf_last_sd_block = sd_block;
+    memcpy(flushbuf_ps2_sectors + flushbuf_ps2_sectors_count,
+           unmarked_ps2_sectors,
+           unmarked_ps2_sectors_count * sizeof(unmarked_ps2_sectors[0]));
+    flushbuf_ps2_sectors_count += unmarked_ps2_sectors_count;
+    unmarked_ps2_sectors_count = 0;
+}
+
+static int sector_sd_block(int sector) {
+    int sector_offset = sector * PS2_PAGE_SIZE;
+    int sd_block_offset = sector_offset - (sector_offset % SD_BLOCK_SIZE);
+    return sd_block_offset / SD_BLOCK_SIZE;
 }
 
 /* this goes through blocks in psram marked as dirty and flushes them to sd */
@@ -132,37 +154,44 @@ void ps2_dirty_task(void) {
             break;
 
         ps2_dirty_lock();
-        int sector = ps2_dirty_get_marked();
-        num_after = num_dirty;
+
+        int sector, sd_block, next_sd_block;
+        do {
+            sector = ps2_dirty_get_marked();
+            num_after = num_dirty;
+            if (sector == -1) break;
+
+            unmarked_ps2_sectors[unmarked_ps2_sectors_count] = sector;
+            ++unmarked_ps2_sectors_count;
+            sd_block = sector_sd_block(sector);
+            next_sd_block = num_after == 0 ? -1 : sector_sd_block(dirty_heap[0]);
+        } while (next_sd_block == sd_block);
+
         if (sector == -1) {
             ps2_dirty_unlock();
             break;
         }
 
-        uint8_t *sector_slot = flushbuf + (flushbuf_sectors_count * PS2_PAGE_SIZE);
-        psram_read_dma(sector * PS2_PAGE_SIZE, sector_slot, PS2_PAGE_SIZE, NULL);
+        uint8_t *sd_block_slot = flushbuf + (flushbuf_sd_blocks_count * SD_BLOCK_SIZE);
+        psram_read_dma(sd_block * SD_BLOCK_SIZE, sd_block_slot, SD_BLOCK_SIZE, NULL);
         psram_wait_for_dma();
         ps2_dirty_unlock();
 
         ++hit;
 
-        if (flushbuf_sectors_count > 0 && sector != flushbuf_last_sector + 1) {
+        if (flushbuf_sd_blocks_count > 0 && sd_block != flushbuf_last_sd_block + 1) {
             contiguity_broken = true;
         } else {
-            ++flushbuf_sectors_count;
-            if (flushbuf_first_sector < 0) flushbuf_first_sector = sector;
-            flushbuf_last_sector = sector;
+            register_flushbuf_sd_block(sd_block);
         }
 
-        if (contiguity_broken || flushbuf_sectors_count == FLUSHBUF_SIZE / PS2_PAGE_SIZE) {
+        if (contiguity_broken || flushbuf_sd_blocks_count == FLUSHBUF_SIZE / SD_BLOCK_SIZE) {
             write_flushbuf();
         }
 
         if (contiguity_broken) {
-            memcpy(flushbuf, sector_slot, PS2_PAGE_SIZE);
-            flushbuf_sectors_count = 1;
-            flushbuf_first_sector = sector;
-            flushbuf_last_sector = sector;
+            memcpy(flushbuf, sd_block_slot, SD_BLOCK_SIZE);
+            register_flushbuf_sd_block(sd_block);
             contiguity_broken = false;
         }
     }
