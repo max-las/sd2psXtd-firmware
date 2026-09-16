@@ -38,25 +38,28 @@ typedef struct {
     uint32_t sm;
 } pio_t;
 
-static pio_t cmd_reader, dat_writer, cntrl_reader;
+static pio_t cmd_reader, dat_writer, cntrl_reader, ack_generator;
 static volatile int mc_exit_request, mc_exit_response, mc_enter_request, mc_enter_response;
 
 enum { RECEIVE_RESET, RECEIVE_EXIT, RECEIVE_OK };
 
 
 static void __time_critical_func(reset_pio)(void) {
-    pio_set_sm_mask_enabled(pio0, (1 << cmd_reader.sm) | (1 << dat_writer.sm) | (1 << cntrl_reader.sm), false);
-    pio_restart_sm_mask(pio0, (1 << cmd_reader.sm) | (1 << dat_writer.sm) | (1 << cntrl_reader.sm));
+    pio_set_sm_mask_enabled(pio0, (1 << cmd_reader.sm) | (1 << dat_writer.sm) | (1 << cntrl_reader.sm) | (1 << ack_generator.sm), false);
+    pio_restart_sm_mask(pio0, (1 << cmd_reader.sm) | (1 << dat_writer.sm) | (1 << cntrl_reader.sm) | (1 << ack_generator.sm));
 
     pio_sm_exec(pio0, cmd_reader.sm, pio_encode_jmp(cmd_reader.offset));
     pio_sm_exec(pio0, dat_writer.sm, pio_encode_jmp(dat_writer.offset));
     pio_sm_exec(pio0, cntrl_reader.sm, pio_encode_jmp(cntrl_reader.offset));
+    pio_sm_exec(pio0, ack_generator.sm,pio_encode_set(pio_pindirs, 0));
+    pio_sm_exec(pio0, ack_generator.sm, pio_encode_jmp(ack_generator.offset));
 
     pio_sm_clear_fifos(pio0, cmd_reader.sm);
     pio_sm_clear_fifos(pio0, cntrl_reader.sm);
     pio_sm_drain_tx_fifo(pio0, dat_writer.sm);
+    pio_interrupt_clear(pio0, 4);
 
-    pio_enable_sm_mask_in_sync(pio0, (1 << cmd_reader.sm) | (1 << dat_writer.sm) | (1 << cntrl_reader.sm));
+    pio_enable_sm_mask_in_sync(pio0, (1 << cmd_reader.sm) | (1 << dat_writer.sm) | (1 << cntrl_reader.sm) | (1 << ack_generator.sm));
 
     reset = 1;
 }
@@ -86,10 +89,14 @@ static void __time_critical_func(init_pio)(void) {
     cntrl_reader.sm = pio_claim_unused_sm(pio0, true);
     log(LOG_TRACE, "cntrl_reader offset %d, sm %d\n", cntrl_reader.offset, cntrl_reader.sm);
 
+    ack_generator.offset = pio_add_program(pio0, &ack_generator_program);
+    ack_generator.sm = pio_claim_unused_sm(pio0, true);
+    log(LOG_TRACE, "ack_generator offset %d, sm %d\n", ack_generator.offset, ack_generator.sm);
 
     cmd_reader_program_init(pio0, cmd_reader.sm, cmd_reader.offset);
     dat_writer_program_init(pio0, dat_writer.sm, dat_writer.offset);
     controller_program_init(pio0, cntrl_reader.sm, cntrl_reader.offset);
+    ack_generator_program_init(pio0, ack_generator.sm, ack_generator.offset);
 }
 
 static void __time_critical_func(card_deselected)(uint gpio, uint32_t event_mask) {
@@ -495,6 +502,7 @@ static void __no_inline_not_in_flash_func(mc_main)(void) {
         {}
         mc_enter_response = 1;
 
+        reset_pio();
         mc_main_loop();
     }
 }
@@ -587,12 +595,20 @@ void ps1_memory_card_enter(void) {
 }
 
 void ps1_memory_card_unload(void) {
+    pio_sm_set_enabled(pio0, dat_writer.sm, false);
+    pio_sm_set_enabled(pio0, cmd_reader.sm, false);
+    pio_sm_set_enabled(pio0, cntrl_reader.sm, false);
+    pio_sm_set_enabled(pio0, ack_generator.sm, false);
     pio_remove_program(pio0, &cmd_reader_program, cmd_reader.offset);
     pio_sm_unclaim(pio0, cmd_reader.sm);
     pio_remove_program(pio0, &cmd_reader_program, cntrl_reader.offset);
     pio_sm_unclaim(pio0, cntrl_reader.sm);
     pio_remove_program(pio0, &dat_writer_program, dat_writer.offset);
     pio_sm_unclaim(pio0, dat_writer.sm);
+    pio_remove_program(pio0, &ack_generator_program,
+                       ack_generator.offset);
+    pio_sm_unclaim(pio0, ack_generator.sm);
+
     log(LOG_TRACE, "Unclaimed %u, %u, %u!\n", cmd_reader.sm, dat_writer.sm, cntrl_reader.sm);
 
 }
